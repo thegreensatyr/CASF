@@ -36,7 +36,9 @@
 - /legitimacy/research: Claude Sonnet 4.5 + curated reputable/scam list → trust score 0-100, verdict, flags
 - Dashboard with stats + scan/lookup history cards
 - **Scam Wall**: community submissions + up/down voting (auth required to post/vote; public to view). Sort by Top or New. One vote per user per post (upsert; switchable; removable).
-- 100% backend test pass: 15/15 core + 18/18 scam wall = **33/33 total**
+- **Affiliate CTAs (monetization)**: admin-managed casino list shown contextually on (a) low-trust legitimacy reports, (b) technique detail pages, (c) scam wall list. Click tracking + per-casino stats. `rel="nofollow sponsored"`, 18+ disclaimer.
+- Admin role via `ADMIN_EMAIL` env var; `/admin/affiliates` CRUD page with click stats.
+- 100% backend test pass: 15 core + 18 scam wall + 18 affiliate = **51/51 total**
 
 ## Prioritized backlog
 - **P1** — Live screen capture via `getDisplayMedia` (browser screen-share) → periodic frame analysis
