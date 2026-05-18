@@ -508,6 +508,127 @@ async def legit_history(user=Depends(get_current_user)):
     return [LegitimacyOut(**d) for d in docs]
 
 
+# ============= Scam Wall =============
+class ScamPostReq(BaseModel):
+    casino_name: str = Field(..., min_length=2, max_length=120)
+    title: str = Field(..., min_length=4, max_length=200)
+    story: str = Field(..., min_length=20, max_length=5000)
+    evidence_url: Optional[str] = None
+
+
+class ScamPostOut(BaseModel):
+    id: str
+    user_id: str
+    author_name: str
+    casino_name: str
+    title: str
+    story: str
+    evidence_url: Optional[str]
+    upvotes: int
+    downvotes: int
+    score: int
+    my_vote: Optional[str]
+    created_at: str
+
+
+class VoteReq(BaseModel):
+    vote: str  # "up" | "down" | "none"
+
+
+async def _enrich_scam(doc: dict, user_id: Optional[str]) -> dict:
+    upvotes = await db.scam_votes.count_documents({"scam_id": doc["id"], "vote": "up"})
+    downvotes = await db.scam_votes.count_documents({"scam_id": doc["id"], "vote": "down"})
+    my_vote = None
+    if user_id:
+        v = await db.scam_votes.find_one({"scam_id": doc["id"], "user_id": user_id}, {"_id": 0})
+        if v:
+            my_vote = v.get("vote")
+    doc["upvotes"] = upvotes
+    doc["downvotes"] = downvotes
+    doc["score"] = upvotes - downvotes
+    doc["my_vote"] = my_vote
+    return doc
+
+
+async def get_optional_user(authorization: Optional[str] = None):
+    return None
+
+
+@api_router.post("/scams", response_model=ScamPostOut)
+async def create_scam(req: ScamPostReq, user=Depends(get_current_user)):
+    post_id = str(uuid.uuid4())
+    doc = {
+        "id": post_id,
+        "user_id": user["id"],
+        "author_name": user["name"],
+        "casino_name": req.casino_name.strip(),
+        "title": req.title.strip(),
+        "story": req.story.strip(),
+        "evidence_url": req.evidence_url,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.scam_posts.insert_one(doc)
+    enriched = await _enrich_scam({k: v for k, v in doc.items() if k != "_id"}, user["id"])
+    return ScamPostOut(**enriched)
+
+
+@api_router.get("/scams", response_model=List[ScamPostOut])
+async def list_scams(sort: str = "top", credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False))):
+    user_id = None
+    if credentials:
+        try:
+            payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=[JWT_ALGO])
+            user_id = payload.get("sub")
+        except jwt.PyJWTError:
+            user_id = None
+
+    docs = await db.scam_posts.find({}, {"_id": 0}).to_list(500)
+    enriched = [await _enrich_scam(d, user_id) for d in docs]
+    if sort == "new":
+        enriched.sort(key=lambda d: d["created_at"], reverse=True)
+    else:
+        enriched.sort(key=lambda d: (d["score"], d["created_at"]), reverse=True)
+    return [ScamPostOut(**d) for d in enriched]
+
+
+@api_router.get("/scams/{post_id}", response_model=ScamPostOut)
+async def get_scam(post_id: str, credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False))):
+    user_id = None
+    if credentials:
+        try:
+            payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=[JWT_ALGO])
+            user_id = payload.get("sub")
+        except jwt.PyJWTError:
+            pass
+
+    doc = await db.scam_posts.find_one({"id": post_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Scam post not found")
+    enriched = await _enrich_scam(doc, user_id)
+    return ScamPostOut(**enriched)
+
+
+@api_router.post("/scams/{post_id}/vote", response_model=ScamPostOut)
+async def vote_scam(post_id: str, req: VoteReq, user=Depends(get_current_user)):
+    if req.vote not in ("up", "down", "none"):
+        raise HTTPException(400, "vote must be up, down, or none")
+    post = await db.scam_posts.find_one({"id": post_id}, {"_id": 0})
+    if not post:
+        raise HTTPException(404, "Scam post not found")
+
+    if req.vote == "none":
+        await db.scam_votes.delete_one({"scam_id": post_id, "user_id": user["id"]})
+    else:
+        await db.scam_votes.update_one(
+            {"scam_id": post_id, "user_id": user["id"]},
+            {"$set": {"scam_id": post_id, "user_id": user["id"], "vote": req.vote,
+                      "updated_at": datetime.now(timezone.utc).isoformat()}},
+            upsert=True,
+        )
+    enriched = await _enrich_scam(post, user["id"])
+    return ScamPostOut(**enriched)
+
+
 app.include_router(api_router)
 
 app.add_middleware(

@@ -10,6 +10,7 @@ import { Techniques, TechniqueDetail } from "./pages/Techniques";
 import Analyze from "./pages/Analyze";
 import Legitimacy from "./pages/Legitimacy";
 import Dashboard from "./pages/Dashboard";
+import { ScamWall, NewScam, ScamDetail } from "./pages/ScamWall";
 
 function App() {
   return (
