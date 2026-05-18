@@ -3,6 +3,7 @@ import { api } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
 import { Plus, Trash2, Save, BarChart3 } from "lucide-react";
+import { Link } from "react-router-dom";
 
 const EMPTY = {
   name: "", url: "", license: "", badge: "", description: "",
@@ -79,6 +80,10 @@ export default function AdminAffiliates() {
       <h1 className="font-heading text-4xl md:text-5xl tracking-tighter mb-2">AFFILIATE CASINOS</h1>
       <p className="text-sm text-white/60 font-mono mb-10">
         &gt; Manage the trusted-casino CTAs that appear on low-trust reports, technique pages and the scam wall.
+        {" "}
+        <Link to="/admin/guide" className="text-[var(--neon)] underline" data-testid="link-monetization-guide">
+          New here? Read the monetization quick-start &gt;_
+        </Link>
       </p>
 
       <form onSubmit={save} className="panel p-6 mb-10 space-y-4" data-testid="affiliate-form">

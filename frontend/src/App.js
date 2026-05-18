@@ -12,6 +12,7 @@ import Legitimacy from "./pages/Legitimacy";
 import Dashboard from "./pages/Dashboard";
 import { ScamWall, NewScam, ScamDetail } from "./pages/ScamWall";
 import AdminAffiliates from "./pages/AdminAffiliates";
+import MonetizationGuide from "./pages/MonetizationGuide";
 
 function App() {
   return (
@@ -45,6 +46,7 @@ function App() {
             <Route path="/scams/new" element={<ProtectedRoute><NewScam /></ProtectedRoute>} />
             <Route path="/scams/:id" element={<ScamDetail />} />
             <Route path="/admin/affiliates" element={<ProtectedRoute><AdminAffiliates /></ProtectedRoute>} />
+            <Route path="/admin/guide" element={<ProtectedRoute><MonetizationGuide /></ProtectedRoute>} />
           </Routes>
         </BrowserRouter>
       </AuthProvider>
