@@ -40,6 +40,9 @@ function App() {
             <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
             <Route path="/analyze" element={<ProtectedRoute><Analyze /></ProtectedRoute>} />
             <Route path="/legitimacy" element={<ProtectedRoute><Legitimacy /></ProtectedRoute>} />
+            <Route path="/scams" element={<ScamWall />} />
+            <Route path="/scams/new" element={<ProtectedRoute><NewScam /></ProtectedRoute>} />
+            <Route path="/scams/:id" element={<ScamDetail />} />
           </Routes>
         </BrowserRouter>
       </AuthProvider>
