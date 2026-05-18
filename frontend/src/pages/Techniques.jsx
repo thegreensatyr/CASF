@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { Link, useParams } from "react-router-dom";
 import { AlertTriangle, ArrowLeft } from "lucide-react";
+import TrustedCasinoCTA from "../components/TrustedCasinoCTA";
 
 const SEVERITY_COLOR = {
   low: "text-white/70 border-white/30",
@@ -63,6 +64,7 @@ export function TechniqueDetail() {
         </p>
         <Link to="/analyze" className="btn-neon inline-block mt-4 text-xs">Open analyzer &gt;_</Link>
       </div>
+      <TrustedCasinoCTA source={`technique:${t.slug}`} headline={`CASINOS THAT DON'T DO ${t.name.toUpperCase()}`} />
     </div>
   );
 }

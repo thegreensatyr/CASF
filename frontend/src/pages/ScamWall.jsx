@@ -4,6 +4,7 @@ import { api } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
 import { ArrowUp, ArrowDown, Plus, Flame, Clock, ArrowLeft, ExternalLink } from "lucide-react";
+import TrustedCasinoCTA from "../components/TrustedCasinoCTA";
 
 export function ScamWall() {
   const [posts, setPosts] = useState([]);
@@ -97,6 +98,8 @@ export function ScamWall() {
           </div>
         ))}
       </div>
+
+      {posts.length > 0 && <TrustedCasinoCTA source="scam-wall:list" headline="SCAM-FREE CASINOS WORTH TRYING" />}
     </div>
   );
 }

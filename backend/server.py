@@ -58,6 +58,7 @@ class UserOut(BaseModel):
     id: str
     email: str
     name: str
+    is_admin: bool = False
 
 
 class AuthResp(BaseModel):
@@ -136,6 +137,19 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     user = await db.users.find_one({"id": user_id}, {"_id": 0, "password": 0})
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
+    return user
+
+
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "").lower()
+
+
+def is_admin_user(user: dict) -> bool:
+    return bool(user.get("is_admin")) or (ADMIN_EMAIL and user.get("email", "").lower() == ADMIN_EMAIL)
+
+
+async def require_admin(user=Depends(get_current_user)):
+    if not is_admin_user(user):
+        raise HTTPException(status_code=403, detail="Admin only")
     return user
 
 
@@ -257,13 +271,13 @@ async def login(req: LoginReq):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     return AuthResp(
         token=create_token(user["id"]),
-        user=UserOut(id=user["id"], email=user["email"], name=user["name"]),
+        user=UserOut(id=user["id"], email=user["email"], name=user["name"], is_admin=is_admin_user(user)),
     )
 
 
 @api_router.get("/auth/me", response_model=UserOut)
 async def me(user=Depends(get_current_user)):
-    return UserOut(id=user["id"], email=user["email"], name=user["name"])
+    return UserOut(id=user["id"], email=user["email"], name=user["name"], is_admin=is_admin_user(user))
 
 
 @api_router.get("/techniques", response_model=List[TechniqueOut])
@@ -627,6 +641,119 @@ async def vote_scam(post_id: str, req: VoteReq, user=Depends(get_current_user)):
         )
     enriched = await _enrich_scam(post, user["id"])
     return ScamPostOut(**enriched)
+
+
+# ============= Affiliate Casinos (Monetization) =============
+class AffiliateCasinoReq(BaseModel):
+    name: str = Field(..., min_length=2, max_length=120)
+    url: str = Field(..., min_length=4, max_length=500)
+    license: str = Field("", max_length=120)
+    badge: str = Field("", max_length=60)
+    description: str = Field("", max_length=400)
+    logo_url: Optional[str] = None
+    payout_note: str = Field("", max_length=80)
+    sort_order: int = 0
+    active: bool = True
+
+
+class AffiliateCasinoOut(BaseModel):
+    id: str
+    name: str
+    url: str
+    license: str
+    badge: str
+    description: str
+    logo_url: Optional[str]
+    payout_note: str
+    sort_order: int
+    active: bool
+    created_at: str
+
+
+class ClickReq(BaseModel):
+    affiliate_id: str
+    source: str = "unknown"
+
+
+@api_router.get("/affiliates/casinos", response_model=List[AffiliateCasinoOut])
+async def list_affiliates():
+    docs = await db.affiliate_casinos.find({"active": True}, {"_id": 0}).to_list(200)
+    docs.sort(key=lambda d: (d.get("sort_order", 0), d.get("created_at", "")))
+    return [AffiliateCasinoOut(**d) for d in docs]
+
+
+@api_router.get("/affiliates/casinos/all", response_model=List[AffiliateCasinoOut])
+async def list_affiliates_all(user=Depends(require_admin)):
+    docs = await db.affiliate_casinos.find({}, {"_id": 0}).to_list(500)
+    docs.sort(key=lambda d: (d.get("sort_order", 0), d.get("created_at", "")))
+    return [AffiliateCasinoOut(**d) for d in docs]
+
+
+@api_router.post("/affiliates/casinos", response_model=AffiliateCasinoOut)
+async def create_affiliate(req: AffiliateCasinoReq, user=Depends(require_admin)):
+    cid = str(uuid.uuid4())
+    doc = {
+        "id": cid,
+        **req.model_dump(),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.affiliate_casinos.insert_one(doc)
+    return AffiliateCasinoOut(**{k: v for k, v in doc.items() if k != "_id"})
+
+
+@api_router.put("/affiliates/casinos/{cid}", response_model=AffiliateCasinoOut)
+async def update_affiliate(cid: str, req: AffiliateCasinoReq, user=Depends(require_admin)):
+    existing = await db.affiliate_casinos.find_one({"id": cid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Casino not found")
+    updated = {**existing, **req.model_dump()}
+    await db.affiliate_casinos.update_one({"id": cid}, {"$set": req.model_dump()})
+    return AffiliateCasinoOut(**updated)
+
+
+@api_router.delete("/affiliates/casinos/{cid}")
+async def delete_affiliate(cid: str, user=Depends(require_admin)):
+    res = await db.affiliate_casinos.delete_one({"id": cid})
+    if res.deleted_count == 0:
+        raise HTTPException(404, "Casino not found")
+    return {"deleted": cid}
+
+
+@api_router.post("/affiliates/click")
+async def log_click(
+    req: ClickReq,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(HTTPBearer(auto_error=False)),
+):
+    user_id = None
+    if credentials:
+        try:
+            payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=[JWT_ALGO])
+            user_id = payload.get("sub")
+        except jwt.PyJWTError:
+            pass
+    await db.affiliate_clicks.insert_one({
+        "id": str(uuid.uuid4()),
+        "affiliate_id": req.affiliate_id,
+        "user_id": user_id,
+        "source": req.source,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"ok": True}
+
+
+@api_router.get("/affiliates/stats")
+async def affiliate_stats(user=Depends(require_admin)):
+    pipeline = [
+        {"$group": {"_id": "$affiliate_id", "clicks": {"$sum": 1}}},
+    ]
+    counts = {}
+    async for row in db.affiliate_clicks.aggregate(pipeline):
+        counts[row["_id"]] = row["clicks"]
+    casinos = await db.affiliate_casinos.find({}, {"_id": 0}).to_list(200)
+    return [
+        {"id": c["id"], "name": c["name"], "clicks": counts.get(c["id"], 0), "active": c.get("active", True)}
+        for c in casinos
+    ]
 
 
 app.include_router(api_router)

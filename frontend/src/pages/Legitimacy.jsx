@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api } from "../lib/api";
 import { toast } from "sonner";
 import { Search, Loader2, ShieldCheck, ShieldAlert, ShieldX } from "lucide-react";
+import TrustedCasinoCTA from "../components/TrustedCasinoCTA";
 
 export default function Legitimacy() {
   const [name, setName] = useState("");
@@ -100,6 +101,10 @@ export default function Legitimacy() {
           </div>
         );
       })()}
+
+      {report && report.trust_score < 60 && (
+        <TrustedCasinoCTA source={`legitimacy:${report.casino_name}`} headline="SAFER ALTERNATIVES" />
+      )}
     </div>
   );
 }
