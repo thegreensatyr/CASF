@@ -35,7 +35,8 @@
 - /analyze endpoint: image/video → Gemini 3 Flash multimodal forensic report
 - /legitimacy/research: Claude Sonnet 4.5 + curated reputable/scam list → trust score 0-100, verdict, flags
 - Dashboard with stats + scan/lookup history cards
-- 100% backend test pass (15/15 tests via pytest suite)
+- **Scam Wall**: community submissions + up/down voting (auth required to post/vote; public to view). Sort by Top or New. One vote per user per post (upsert; switchable; removable).
+- 100% backend test pass: 15/15 core + 18/18 scam wall = **33/33 total**
 
 ## Prioritized backlog
 - **P1** — Live screen capture via `getDisplayMedia` (browser screen-share) → periodic frame analysis
