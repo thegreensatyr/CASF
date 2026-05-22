@@ -1,4 +1,5 @@
 import os
+import re
 import uuid
 import logging
 import shutil
@@ -93,7 +94,25 @@ class LegitimacyOut(BaseModel):
     report: str
     red_flags: List[str]
     green_flags: List[str]
+    slug: str
     created_at: str
+
+
+class PublicLegitimacyOut(BaseModel):
+    slug: str
+    casino_name: str
+    casino_url: Optional[str]
+    trust_score: int
+    verdict: str
+    report: str
+    red_flags: List[str]
+    green_flags: List[str]
+    created_at: str
+
+
+def make_slug(casino_name: str) -> str:
+    base = re.sub(r"[^a-z0-9]+", "-", casino_name.lower()).strip("-")[:40] or "casino"
+    return f"{base}-{uuid.uuid4().hex[:6]}"
 
 
 class TechniqueOut(BaseModel):
@@ -508,6 +527,7 @@ async def research_casino(req: LegitimacyReq, user=Depends(get_current_user)):
         "report": report,
         "red_flags": red_flags,
         "green_flags": green_flags,
+        "slug": make_slug(req.casino_name),
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.legitimacy_reports.insert_one(doc)
@@ -519,7 +539,32 @@ async def legit_history(user=Depends(get_current_user)):
     docs = await db.legitimacy_reports.find(
         {"user_id": user["id"]}, {"_id": 0}
     ).sort("created_at", -1).to_list(200)
+    # Backfill slug for old records that don't have one
+    for d in docs:
+        if not d.get("slug"):
+            d["slug"] = make_slug(d.get("casino_name", "casino"))
+            await db.legitimacy_reports.update_one({"id": d["id"]}, {"$set": {"slug": d["slug"]}})
     return [LegitimacyOut(**d) for d in docs]
+
+
+@api_router.get("/legitimacy/public/{slug}", response_model=PublicLegitimacyOut)
+async def public_legitimacy_report(slug: str):
+    doc = await db.legitimacy_reports.find_one(
+        {"slug": slug},
+        {"_id": 0, "user_id": 0, "id": 0},
+    )
+    if not doc:
+        raise HTTPException(404, "Report not found")
+    return PublicLegitimacyOut(**doc)
+
+
+@api_router.get("/legitimacy/public", response_model=List[PublicLegitimacyOut])
+async def list_public_reports(limit: int = 20):
+    docs = await db.legitimacy_reports.find(
+        {"slug": {"$exists": True}},
+        {"_id": 0, "user_id": 0, "id": 0},
+    ).sort("created_at", -1).to_list(min(limit, 100))
+    return [PublicLegitimacyOut(**d) for d in docs]
 
 
 # ============= Scam Wall =============

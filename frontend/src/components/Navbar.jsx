@@ -32,6 +32,7 @@ export default function Navbar() {
         <nav className="hidden md:flex items-center gap-1">
           <NavLink to="/" label="Home" />
           <NavLink to="/techniques" label="Tricks" />
+          <NavLink to="/reports" label="Reports" />
           <NavLink to="/scams" label="Wall" />
           {user && <NavLink to="/dashboard" label="Dashboard" />}
           {user && <NavLink to="/analyze" label="Analyze" />}

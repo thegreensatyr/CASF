@@ -13,6 +13,7 @@ import Dashboard from "./pages/Dashboard";
 import { ScamWall, NewScam, ScamDetail } from "./pages/ScamWall";
 import AdminAffiliates from "./pages/AdminAffiliates";
 import MonetizationGuide from "./pages/MonetizationGuide";
+import PublicReport, { PublicReportsList } from "./pages/PublicReport";
 
 function App() {
   return (
@@ -47,6 +48,8 @@ function App() {
             <Route path="/scams/:id" element={<ScamDetail />} />
             <Route path="/admin/affiliates" element={<ProtectedRoute><AdminAffiliates /></ProtectedRoute>} />
             <Route path="/admin/guide" element={<ProtectedRoute><MonetizationGuide /></ProtectedRoute>} />
+            <Route path="/report/:slug" element={<PublicReport />} />
+            <Route path="/reports" element={<PublicReportsList />} />
           </Routes>
         </BrowserRouter>
       </AuthProvider>

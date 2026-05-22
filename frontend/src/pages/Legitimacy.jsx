@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { api } from "../lib/api";
 import { toast } from "sonner";
-import { Search, Loader2, ShieldCheck, ShieldAlert, ShieldX } from "lucide-react";
+import { Search, Loader2, ShieldCheck, ShieldAlert, ShieldX, Share2, Copy, Check } from "lucide-react";
 import TrustedCasinoCTA from "../components/TrustedCasinoCTA";
 
 export default function Legitimacy() {
@@ -66,7 +66,23 @@ export default function Legitimacy() {
       {report && (() => {
         const b = scoreBadge(report.trust_score);
         const { Icon } = b;
+        const shareUrl = `${window.location.origin}/report/${report.slug}`;
+        const copyShare = () => {
+          navigator.clipboard.writeText(shareUrl);
+          toast.success("Public link copied — paste it anywhere");
+        };
         return (
+          <>
+          <div className="flex items-center justify-between flex-wrap gap-3 mb-4 panel p-3 px-4">
+            <div className="text-xs font-mono text-white/70 flex items-center gap-2">
+              <Share2 className="w-3 h-3 text-[var(--neon)]" />
+              <span>Public share URL:</span>
+              <code className="text-[var(--neon)] text-[11px]" data-testid="share-url">{shareUrl}</code>
+            </div>
+            <button onClick={copyShare} className="btn-ghost text-xs flex items-center gap-1" data-testid="copy-share-url">
+              <Copy className="w-3 h-3" /> Copy
+            </button>
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4" data-testid="legit-report">
             <div className={`panel p-6 ${b.color} border-2`}>
               <Icon className="w-8 h-8 mb-3" />
@@ -99,6 +115,7 @@ export default function Legitimacy() {
               ) : (<p className="text-xs text-white/40 font-mono">none detected</p>)}
             </div>
           </div>
+          </>
         );
       })()}
 
