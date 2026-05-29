@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { ShieldCheck, Eye, Brain, Cpu, AlertTriangle, ScanLine } from "lucide-react";
+import HowItWorks from "../components/HowItWorks";
 
 const HERO_BG = "https://static.prod-images.emergentagent.com/jobs/8caf52cb-094a-4d65-a90d-80fcc35c450b/images/75b76f05881f4e4a221ee963f2c32def964326102990541391542ed1f042ba58.png";
 const ROULETTE = "https://static.prod-images.emergentagent.com/jobs/8caf52cb-094a-4d65-a90d-80fcc35c450b/images/e86a09562d24b0d9d2a7744aa33200add6771aeacfd9183d5c81dbcba24590c3.png";
@@ -59,6 +60,8 @@ export default function Landing() {
       </section>
 
       {/* Features bento */}
+      <HowItWorks />
+
       <section className="max-w-7xl mx-auto px-6 md:px-12 py-24">
         <div className="flex items-end justify-between mb-10">
           <h2 className="font-heading text-3xl md:text-4xl tracking-tighter">
