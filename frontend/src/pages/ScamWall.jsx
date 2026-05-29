@@ -17,7 +17,7 @@ export function ScamWall() {
     try {
       const { data } = await api.get(`/scams?sort=${s}`);
       setPosts(data);
-    } catch (e) { /* ignore */ }
+    } catch (e) { console.warn("Failed to load scams:", e); }
     finally { setLoading(false); }
   };
 
@@ -192,7 +192,7 @@ export function ScamDetail() {
     try {
       const { data } = await api.get(`/scams/${id}`);
       setPost(data);
-    } catch (e) { /* ignore */ }
+    } catch (e) { console.warn("Failed to load scam post:", e); }
   };
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [id]);
 
