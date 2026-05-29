@@ -299,6 +299,21 @@ async def me(user=Depends(get_current_user)):
     return UserOut(id=user["id"], email=user["email"], name=user["name"], is_admin=is_admin_user(user))
 
 
+@api_router.get("/stats/public")
+async def public_stats():
+    casinos_analyzed = await db.legitimacy_reports.count_documents({})
+    games_scanned = await db.analyses.count_documents({})
+    scam_reports = await db.scam_posts.count_documents({})
+    users = await db.users.count_documents({})
+    return {
+        "casinos_analyzed": casinos_analyzed,
+        "games_scanned": games_scanned,
+        "scam_reports": scam_reports,
+        "users": users,
+        "techniques_documented": len(TECHNIQUES_SEED),
+    }
+
+
 @api_router.get("/techniques", response_model=List[TechniqueOut])
 async def list_techniques():
     return [TechniqueOut(**t) for t in TECHNIQUES_SEED]

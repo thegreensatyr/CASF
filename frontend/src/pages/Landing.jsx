@@ -1,4 +1,6 @@
 import { Link } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { api } from "../lib/api";
 import { ShieldCheck, Eye, Brain, Cpu, AlertTriangle, ScanLine } from "lucide-react";
 
 const HERO_BG = "https://static.prod-images.emergentagent.com/jobs/8caf52cb-094a-4d65-a90d-80fcc35c450b/images/75b76f05881f4e4a221ee963f2c32def964326102990541391542ed1f042ba58.png";
@@ -6,6 +8,8 @@ const ROULETTE = "https://static.prod-images.emergentagent.com/jobs/8caf52cb-094
 const LOCK = "https://static.prod-images.emergentagent.com/jobs/8caf52cb-094a-4d65-a90d-80fcc35c450b/images/7cb9af410815f2c5b8df7b7ecf5a1dda3da2bdbe5719cb35f35b9c678ba35a39.png";
 
 export default function Landing() {
+  const [stats, setStats] = useState(null);
+  useEffect(() => { api.get("/stats/public").then((r) => setStats(r.data)).catch(()=>{}); }, []);
   return (
     <div className="relative">
       {/* Hero */}
@@ -40,12 +44,12 @@ export default function Landing() {
 
           <div className="mt-16 grid grid-cols-2 md:grid-cols-4 gap-4 max-w-3xl">
             {[
-              { k: "8+", v: "tricks decoded" },
-              { k: "RTP", v: "audited" },
-              { k: "AI", v: "forensics" },
-              { k: "24/7", v: "operator watch" },
+              { k: stats ? stats.casinos_analyzed.toLocaleString() : "—", v: "casinos analyzed" },
+              { k: stats ? stats.games_scanned.toLocaleString() : "—", v: "games scanned" },
+              { k: stats ? stats.scam_reports.toLocaleString() : "—", v: "scam reports filed" },
+              { k: stats ? stats.techniques_documented : "—", v: "tricks decoded" },
             ].map((s) => (
-              <div key={s.v} className="panel p-4">
+              <div key={s.v} className="panel p-4" data-testid={`landing-stat-${s.v.replace(/\s+/g,'-')}`}>
                 <div className="font-heading text-2xl text-[var(--neon)]">{s.k}</div>
                 <div className="text-xs uppercase tracking-widest text-white/60">{s.v}</div>
               </div>
