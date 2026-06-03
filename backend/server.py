@@ -330,16 +330,28 @@ async def me(user=Depends(get_current_user)):
     return build_user_out(user)
 
 
-async def consume_free_quota(user: dict, key: str, limit: int):
+async def check_free_quota(user: dict, key: str, limit: int):
+    """Check quota WITHOUT incrementing. Raise 402 if exhausted."""
     if user.get("is_premium"):
         return
-    used = int(user.get(key, 0))
-    if used >= limit:
+    if int(user.get(key, 0)) >= limit:
         raise HTTPException(
             status_code=402,
-            detail=f"Free quota exhausted. Upgrade to Premium ($9.99/mo) for unlimited.",
+            detail="Free quota exhausted. Upgrade to Premium ($9.99/mo) for unlimited.",
         )
+
+
+async def bump_free_quota(user: dict, key: str):
+    """Increment quota after a successful operation. No-op for premium users."""
+    if user.get("is_premium"):
+        return
     await db.users.update_one({"id": user["id"]}, {"$inc": {key: 1}})
+
+
+# Backwards-compat alias kept for older call sites (does check + increment)
+async def consume_free_quota(user: dict, key: str, limit: int):
+    await check_free_quota(user, key, limit)
+    await bump_free_quota(user, key)
 
 
 @api_router.get("/stats/public")
@@ -394,7 +406,7 @@ async def analyze_media(
     casino_name: str = Form(""),
     user=Depends(get_current_user),
 ):
-    await consume_free_quota(user, "free_video_scans_used", FREE_VIDEO_SCANS_LIMIT)
+    await check_free_quota(user, "free_video_scans_used", FREE_VIDEO_SCANS_LIMIT)
     ext = (file.filename or "").split(".")[-1].lower()
     if ext not in ("mp4", "mov", "webm", "png", "jpg", "jpeg", "gif", "webp"):
         raise HTTPException(400, "Unsupported file type")
@@ -478,6 +490,7 @@ async def analyze_media(
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.analyses.insert_one(record)
+    await bump_free_quota(user, "free_video_scans_used")
     return AnalysisOut(**{k: v for k, v in record.items() if k != "file_path"})
 
 
@@ -515,7 +528,7 @@ KNOWN_CASINOS = {
 
 @api_router.post("/legitimacy/research", response_model=LegitimacyOut)
 async def research_casino(req: LegitimacyReq, user=Depends(get_current_user)):
-    await consume_free_quota(user, "free_trust_checks_used", FREE_TRUST_CHECKS_LIMIT)
+    await check_free_quota(user, "free_trust_checks_used", FREE_TRUST_CHECKS_LIMIT)
     name_lower = req.casino_name.lower().strip()
     db_hint = "no direct match in our curated database"
     for s in KNOWN_CASINOS["scams"]:
@@ -608,6 +621,7 @@ async def research_casino(req: LegitimacyReq, user=Depends(get_current_user)):
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.legitimacy_reports.insert_one(doc)
+    await bump_free_quota(user, "free_trust_checks_used")
     return LegitimacyOut(**doc)
 
 
@@ -917,37 +931,53 @@ async def create_premium_checkout(req: CheckoutReq, http_request: FastAPIRequest
 
 @api_router.get("/stripe/checkout/status/{session_id}")
 async def stripe_checkout_status(session_id: str, http_request: FastAPIRequest, user=Depends(get_current_user)):
-    host_url = str(http_request.base_url).rstrip("/")
-    webhook_url = f"{host_url}/api/webhook/stripe"
-    stripe_checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
-
-    status: CheckoutStatusResponse = await stripe_checkout.get_checkout_status(session_id)
-
     tx = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
     if not tx:
         raise HTTPException(404, "Transaction not found")
 
-    # Only upgrade once
-    if status.payment_status == "paid" and tx.get("payment_status") != "paid":
-        await db.payment_transactions.update_one(
-            {"session_id": session_id},
-            {"$set": {"payment_status": "paid", "status": status.status,
-                      "paid_at": datetime.now(timezone.utc).isoformat()}},
-        )
-        await db.users.update_one(
-            {"id": tx["user_id"]},
-            {"$set": {"is_premium": True, "premium_since": datetime.now(timezone.utc).isoformat()}},
-        )
-    elif status.status == "expired":
-        await db.payment_transactions.update_one(
-            {"session_id": session_id},
-            {"$set": {"payment_status": "expired", "status": status.status}},
-        )
+    # Try the Stripe proxy; fall back to local payment_transactions record if proxy is unavailable.
+    try:
+        host_url = str(http_request.base_url).rstrip("/")
+        webhook_url = f"{host_url}/api/webhook/stripe"
+        stripe_checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
+        status: CheckoutStatusResponse = await stripe_checkout.get_checkout_status(session_id)
+        proxy_ok = True
+    except Exception as e:
+        logger.warning(f"Stripe status proxy unavailable, using local record: {e}")
+        proxy_ok = False
+
+    if proxy_ok:
+        # Only upgrade once
+        if status.payment_status == "paid" and tx.get("payment_status") != "paid":
+            await db.payment_transactions.update_one(
+                {"session_id": session_id},
+                {"$set": {"payment_status": "paid", "status": status.status,
+                          "paid_at": datetime.now(timezone.utc).isoformat()}},
+            )
+            await db.users.update_one(
+                {"id": tx["user_id"]},
+                {"$set": {"is_premium": True, "premium_since": datetime.now(timezone.utc).isoformat()}},
+            )
+        elif status.status == "expired":
+            await db.payment_transactions.update_one(
+                {"session_id": session_id},
+                {"$set": {"payment_status": "expired", "status": status.status}},
+            )
+        return {
+            "status": status.status,
+            "payment_status": status.payment_status,
+            "amount_total": int(status.amount_total),
+            "currency": status.currency,
+            "source": "stripe",
+        }
+
+    # Fallback: rely on local record (updated by webhook). Return what we know.
     return {
-        "status": status.status,
-        "payment_status": status.payment_status,
-        "amount_total": status.amount_total,
-        "currency": status.currency,
+        "status": tx.get("status", "open"),
+        "payment_status": tx.get("payment_status", "initiated"),
+        "amount_total": int(float(tx.get("amount", 0)) * 100),
+        "currency": tx.get("currency", "usd"),
+        "source": "local_fallback",
     }
 
 
@@ -978,8 +1008,13 @@ async def stripe_webhook(request: FastAPIRequest):
 
 # ============= SEO =============
 @app.get("/api/sitemap.xml")
-async def sitemap():
-    base = "https://scam-spotter-casino.preview.emergentagent.com"
+async def sitemap(request: FastAPIRequest):
+    # Use SITE_URL env if provided, else derive from request host
+    base = os.environ.get("SITE_URL", "").rstrip("/")
+    if not base:
+        host = request.headers.get("x-forwarded-host") or request.url.hostname
+        scheme = request.headers.get("x-forwarded-proto") or "https"
+        base = f"{scheme}://{host}" if host else "https://scam-spotter-casino.preview.emergentagent.com"
     static_urls = ["/", "/techniques", "/reports", "/scams", "/pricing", "/compare"]
     docs = await db.legitimacy_reports.find({"slug": {"$exists": True}}, {"_id": 0, "slug": 1, "created_at": 1}).to_list(2000)
     techniques = [t["slug"] for t in TECHNIQUES_SEED]
