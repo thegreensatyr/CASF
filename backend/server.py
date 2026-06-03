@@ -305,13 +305,30 @@ async def public_stats():
     games_scanned = await db.analyses.count_documents({})
     scam_reports = await db.scam_posts.count_documents({})
     users = await db.users.count_documents({})
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    scams_today = await db.scam_posts.count_documents({"created_at": {"$gte": cutoff}})
     return {
         "casinos_analyzed": casinos_analyzed,
         "games_scanned": games_scanned,
         "scam_reports": scam_reports,
+        "scams_today": scams_today,
         "users": users,
         "techniques_documented": len(TECHNIQUES_SEED),
     }
+
+
+@api_router.get("/activity/recent")
+async def recent_activity(limit: int = 8):
+    events = []
+    async for d in db.legitimacy_reports.find({}, {"_id": 0, "casino_name": 1, "trust_score": 1, "created_at": 1, "slug": 1}).sort("created_at", -1).limit(limit):
+        events.append({"type": "trust_check", "label": f"{d.get('casino_name','?')} trust check", "detail": f"{d.get('trust_score','?')}/100", "slug": d.get("slug"), "created_at": d.get("created_at")})
+    async for d in db.scam_posts.find({}, {"_id": 0, "casino_name": 1, "title": 1, "created_at": 1, "id": 1}).sort("created_at", -1).limit(limit):
+        events.append({"type": "scam_report", "label": f"Scam report: {d.get('casino_name','?')}", "detail": d.get("title", "")[:60], "slug": None, "post_id": d.get("id"), "created_at": d.get("created_at")})
+    async for d in db.analyses.find({}, {"_id": 0, "casino_name": 1, "game_type": 1, "created_at": 1, "techniques_detected": 1}).sort("created_at", -1).limit(limit):
+        techs = d.get("techniques_detected") or []
+        events.append({"type": "ai_scan", "label": f"{d.get('game_type','?')} scan", "detail": (techs[0] if techs else "analyzed"), "slug": None, "created_at": d.get("created_at")})
+    events.sort(key=lambda e: e.get("created_at", ""), reverse=True)
+    return events[:limit]
 
 
 @api_router.get("/techniques", response_model=List[TechniqueOut])

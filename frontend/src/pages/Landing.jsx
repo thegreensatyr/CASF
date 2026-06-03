@@ -3,6 +3,10 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { ShieldCheck, Eye, Brain, Cpu, AlertTriangle, ScanLine } from "lucide-react";
 import HowItWorks from "../components/HowItWorks";
+import ActivityFeed from "../components/ActivityFeed";
+import CommunityQuote from "../components/CommunityQuote";
+import AuthorityBar from "../components/AuthorityBar";
+import { CountUp } from "../lib/ui";
 
 const HERO_BG = "https://static.prod-images.emergentagent.com/jobs/8caf52cb-094a-4d65-a90d-80fcc35c450b/images/75b76f05881f4e4a221ee963f2c32def964326102990541391542ed1f042ba58.png";
 const ROULETTE = "https://static.prod-images.emergentagent.com/jobs/8caf52cb-094a-4d65-a90d-80fcc35c450b/images/e86a09562d24b0d9d2a7744aa33200add6771aeacfd9183d5c81dbcba24590c3.png";
@@ -45,13 +49,15 @@ export default function Landing() {
 
           <div className="mt-16 grid grid-cols-2 md:grid-cols-4 gap-4 max-w-3xl">
             {[
-              { k: stats ? stats.casinos_analyzed.toLocaleString() : "—", v: "casinos analyzed" },
-              { k: stats ? stats.games_scanned.toLocaleString() : "—", v: "games scanned" },
-              { k: stats ? stats.scam_reports.toLocaleString() : "—", v: "scam reports filed" },
-              { k: stats ? stats.techniques_documented : "—", v: "tricks decoded" },
+              { k: stats?.casinos_analyzed ?? 0, v: "casinos analyzed" },
+              { k: stats?.games_scanned ?? 0, v: "games scanned" },
+              { k: stats?.scam_reports ?? 0, v: "scam reports filed" },
+              { k: stats?.techniques_documented ?? 0, v: "tricks decoded" },
             ].map((s) => (
               <div key={s.v} className="panel p-4" data-testid={`landing-stat-${s.v.replace(/\s+/g,'-')}`}>
-                <div className="font-heading text-2xl text-[var(--neon)]">{s.k}</div>
+                <div className="font-heading text-2xl text-[var(--neon)]">
+                  {stats ? <CountUp to={s.k} /> : "—"}
+                </div>
                 <div className="text-xs uppercase tracking-widest text-white/60">{s.v}</div>
               </div>
             ))}
@@ -60,7 +66,10 @@ export default function Landing() {
       </section>
 
       {/* Features bento */}
+      <AuthorityBar />
       <HowItWorks />
+      <ActivityFeed />
+      <CommunityQuote />
 
       <section className="max-w-7xl mx-auto px-6 md:px-12 py-24">
         <div className="flex items-end justify-between mb-10">
@@ -140,8 +149,13 @@ export default function Landing() {
         </div>
       </section>
 
-      <footer className="border-t border-white/10 py-8 text-center text-xs text-white/40 font-mono">
-        casino.spotter / educational use only / play responsibly / 18+
+      <footer className="border-t border-white/10 py-10 text-center">
+        <p className="text-xs text-[var(--neon)] font-mono">
+          <CountUp to={(stats?.casinos_analyzed ?? 0) + (stats?.games_scanned ?? 0) + (stats?.scam_reports ?? 0)} duration={1800} /> forensic operations run by the community
+        </p>
+        <p className="text-[10px] text-white/40 font-mono mt-2">
+          casino.spotter / educational use only / play responsibly / 18+
+        </p>
       </footer>
     </div>
   );

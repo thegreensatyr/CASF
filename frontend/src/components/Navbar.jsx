@@ -1,11 +1,21 @@
 import { Link, useNavigate, useLocation } from "react-router-dom";
+import { useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { Terminal, LogOut } from "lucide-react";
+import { api } from "../lib/api";
+import { Terminal, LogOut, AlertTriangle } from "lucide-react";
 
 export default function Navbar() {
   const { user, logout } = useAuth();
   const nav = useNavigate();
   const loc = useLocation();
+  const [scamsToday, setScamsToday] = useState(0);
+
+  useEffect(() => {
+    const load = () => api.get("/stats/public").then((r) => setScamsToday(r.data.scams_today || 0)).catch(() => {});
+    load();
+    const t = setInterval(load, 30000);
+    return () => clearInterval(t);
+  }, []);
 
   const NavLink = ({ to, label }) => (
     <Link
@@ -27,6 +37,16 @@ export default function Navbar() {
           <span className="font-heading font-black text-base tracking-tight">
             CASINO<span className="text-[var(--neon)]">.SPOTTER</span>
           </span>
+          {scamsToday > 0 && (
+            <Link
+              to="/scams"
+              data-testid="scams-today-badge"
+              className="hidden md:flex items-center gap-1 ml-3 px-2 py-0.5 border border-[var(--danger)]/60 text-[var(--danger)] text-[10px] uppercase tracking-widest font-mono hover:bg-[var(--danger)]/10"
+            >
+              <AlertTriangle className="w-3 h-3" />
+              {scamsToday} new today
+            </Link>
+          )}
         </Link>
 
         <nav className="hidden md:flex items-center gap-1">
