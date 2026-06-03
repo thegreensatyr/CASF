@@ -18,6 +18,12 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, EmailStr, Field
 
 from emergentintegrations.llm.chat import LlmChat, UserMessage, FileContentWithMimeType
+from emergentintegrations.payments.stripe.checkout import (
+    StripeCheckout, CheckoutSessionRequest, CheckoutSessionResponse,
+    CheckoutStatusResponse,
+)
+from fastapi import Request as FastAPIRequest
+from fastapi.responses import Response
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -29,8 +35,16 @@ MONGO_URL = os.environ["MONGO_URL"]
 DB_NAME = os.environ["DB_NAME"]
 EMERGENT_LLM_KEY = os.environ["EMERGENT_LLM_KEY"]
 JWT_SECRET = os.environ["JWT_SECRET"]
+STRIPE_API_KEY = os.environ.get("STRIPE_API_KEY", "sk_test_emergent")
 JWT_ALGO = "HS256"
 JWT_EXP_DAYS = 7
+
+# Freemium quota
+FREE_TRUST_CHECKS_LIMIT = 1
+FREE_VIDEO_SCANS_LIMIT = 1
+
+# Subscription package (server-side fixed)
+PREMIUM_MONTHLY_USD = 9.99
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
@@ -60,6 +74,11 @@ class UserOut(BaseModel):
     email: str
     name: str
     is_admin: bool = False
+    is_premium: bool = False
+    free_trust_checks_used: int = 0
+    free_video_scans_used: int = 0
+    free_trust_checks_limit: int = FREE_TRUST_CHECKS_LIMIT
+    free_video_scans_limit: int = FREE_VIDEO_SCANS_LIMIT
 
 
 class AuthResp(BaseModel):
@@ -172,6 +191,18 @@ async def require_admin(user=Depends(get_current_user)):
     return user
 
 
+def build_user_out(user: dict) -> UserOut:
+    return UserOut(
+        id=user["id"],
+        email=user["email"],
+        name=user["name"],
+        is_admin=is_admin_user(user),
+        is_premium=bool(user.get("is_premium")),
+        free_trust_checks_used=int(user.get("free_trust_checks_used", 0)),
+        free_video_scans_used=int(user.get("free_video_scans_used", 0)),
+    )
+
+
 # ============= Techniques seed =============
 TECHNIQUES_SEED = [
     {
@@ -279,7 +310,7 @@ async def signup(req: SignupReq):
     await db.users.insert_one(user_doc)
     return AuthResp(
         token=create_token(user_id),
-        user=UserOut(id=user_id, email=req.email, name=req.name),
+        user=build_user_out({**user_doc, "id": user_id}),
     )
 
 
@@ -290,13 +321,25 @@ async def login(req: LoginReq):
         raise HTTPException(status_code=401, detail="Invalid email or password")
     return AuthResp(
         token=create_token(user["id"]),
-        user=UserOut(id=user["id"], email=user["email"], name=user["name"], is_admin=is_admin_user(user)),
+        user=build_user_out(user),
     )
 
 
 @api_router.get("/auth/me", response_model=UserOut)
 async def me(user=Depends(get_current_user)):
-    return UserOut(id=user["id"], email=user["email"], name=user["name"], is_admin=is_admin_user(user))
+    return build_user_out(user)
+
+
+async def consume_free_quota(user: dict, key: str, limit: int):
+    if user.get("is_premium"):
+        return
+    used = int(user.get(key, 0))
+    if used >= limit:
+        raise HTTPException(
+            status_code=402,
+            detail=f"Free quota exhausted. Upgrade to Premium ($9.99/mo) for unlimited.",
+        )
+    await db.users.update_one({"id": user["id"]}, {"$inc": {key: 1}})
 
 
 @api_router.get("/stats/public")
@@ -351,6 +394,7 @@ async def analyze_media(
     casino_name: str = Form(""),
     user=Depends(get_current_user),
 ):
+    await consume_free_quota(user, "free_video_scans_used", FREE_VIDEO_SCANS_LIMIT)
     ext = (file.filename or "").split(".")[-1].lower()
     if ext not in ("mp4", "mov", "webm", "png", "jpg", "jpeg", "gif", "webp"):
         raise HTTPException(400, "Unsupported file type")
@@ -471,6 +515,7 @@ KNOWN_CASINOS = {
 
 @api_router.post("/legitimacy/research", response_model=LegitimacyOut)
 async def research_casino(req: LegitimacyReq, user=Depends(get_current_user)):
+    await consume_free_quota(user, "free_trust_checks_used", FREE_TRUST_CHECKS_LIMIT)
     name_lower = req.casino_name.lower().strip()
     db_hint = "no direct match in our curated database"
     for s in KNOWN_CASINOS["scams"]:
@@ -831,6 +876,125 @@ async def affiliate_stats(user=Depends(require_admin)):
         {"id": c["id"], "name": c["name"], "clicks": counts.get(c["id"], 0), "active": c.get("active", True)}
         for c in casinos
     ]
+
+
+# ============= Stripe Subscription (Premium) =============
+class CheckoutReq(BaseModel):
+    origin_url: str
+
+
+@api_router.post("/stripe/checkout")
+async def create_premium_checkout(req: CheckoutReq, http_request: FastAPIRequest, user=Depends(get_current_user)):
+    host_url = str(http_request.base_url).rstrip("/")
+    webhook_url = f"{host_url}/api/webhook/stripe"
+    stripe_checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
+
+    origin = req.origin_url.rstrip("/")
+    success_url = f"{origin}/pricing/success?session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url = f"{origin}/pricing"
+
+    checkout_req = CheckoutSessionRequest(
+        amount=float(PREMIUM_MONTHLY_USD),
+        currency="usd",
+        success_url=success_url,
+        cancel_url=cancel_url,
+        metadata={"user_id": user["id"], "plan": "premium_monthly"},
+    )
+    session: CheckoutSessionResponse = await stripe_checkout.create_checkout_session(checkout_req)
+
+    await db.payment_transactions.insert_one({
+        "id": str(uuid.uuid4()),
+        "session_id": session.session_id,
+        "user_id": user["id"],
+        "amount": float(PREMIUM_MONTHLY_USD),
+        "currency": "usd",
+        "metadata": {"plan": "premium_monthly"},
+        "payment_status": "initiated",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"url": session.url, "session_id": session.session_id}
+
+
+@api_router.get("/stripe/checkout/status/{session_id}")
+async def stripe_checkout_status(session_id: str, http_request: FastAPIRequest, user=Depends(get_current_user)):
+    host_url = str(http_request.base_url).rstrip("/")
+    webhook_url = f"{host_url}/api/webhook/stripe"
+    stripe_checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
+
+    status: CheckoutStatusResponse = await stripe_checkout.get_checkout_status(session_id)
+
+    tx = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
+    if not tx:
+        raise HTTPException(404, "Transaction not found")
+
+    # Only upgrade once
+    if status.payment_status == "paid" and tx.get("payment_status") != "paid":
+        await db.payment_transactions.update_one(
+            {"session_id": session_id},
+            {"$set": {"payment_status": "paid", "status": status.status,
+                      "paid_at": datetime.now(timezone.utc).isoformat()}},
+        )
+        await db.users.update_one(
+            {"id": tx["user_id"]},
+            {"$set": {"is_premium": True, "premium_since": datetime.now(timezone.utc).isoformat()}},
+        )
+    elif status.status == "expired":
+        await db.payment_transactions.update_one(
+            {"session_id": session_id},
+            {"$set": {"payment_status": "expired", "status": status.status}},
+        )
+    return {
+        "status": status.status,
+        "payment_status": status.payment_status,
+        "amount_total": status.amount_total,
+        "currency": status.currency,
+    }
+
+
+@app.post("/api/webhook/stripe")
+async def stripe_webhook(request: FastAPIRequest):
+    body = await request.body()
+    sig = request.headers.get("Stripe-Signature", "")
+    host_url = str(request.base_url).rstrip("/")
+    stripe_checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=f"{host_url}/api/webhook/stripe")
+    try:
+        evt = await stripe_checkout.handle_webhook(body, sig)
+    except Exception as e:
+        logger.exception("Stripe webhook error")
+        raise HTTPException(400, str(e))
+    if evt.payment_status == "paid" and evt.session_id:
+        tx = await db.payment_transactions.find_one({"session_id": evt.session_id}, {"_id": 0})
+        if tx and tx.get("payment_status") != "paid":
+            await db.payment_transactions.update_one(
+                {"session_id": evt.session_id},
+                {"$set": {"payment_status": "paid", "paid_at": datetime.now(timezone.utc).isoformat()}},
+            )
+            await db.users.update_one(
+                {"id": tx["user_id"]},
+                {"$set": {"is_premium": True}},
+            )
+    return {"received": True}
+
+
+# ============= SEO =============
+@app.get("/api/sitemap.xml")
+async def sitemap():
+    base = "https://scam-spotter-casino.preview.emergentagent.com"
+    static_urls = ["/", "/techniques", "/reports", "/scams", "/pricing", "/compare"]
+    docs = await db.legitimacy_reports.find({"slug": {"$exists": True}}, {"_id": 0, "slug": 1, "created_at": 1}).to_list(2000)
+    techniques = [t["slug"] for t in TECHNIQUES_SEED]
+
+    items = []
+    for u in static_urls:
+        items.append(f"<url><loc>{base}{u}</loc><changefreq>weekly</changefreq></url>")
+    for t in techniques:
+        items.append(f"<url><loc>{base}/techniques/{t}</loc><changefreq>monthly</changefreq></url>")
+    for d in docs:
+        lastmod = (d.get("created_at") or "")[:10]
+        items.append(f"<url><loc>{base}/report/{d['slug']}</loc><lastmod>{lastmod}</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>")
+
+    xml = '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' + "\n".join(items) + "\n</urlset>"
+    return Response(content=xml, media_type="application/xml")
 
 
 app.include_router(api_router)

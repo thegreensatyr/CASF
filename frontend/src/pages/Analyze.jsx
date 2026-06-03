@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api } from "../lib/api";
 import { toast } from "sonner";
 import { Upload, FileVideo, FileImage, Loader2 } from "lucide-react";
+import QuotaBanner from "../components/QuotaBanner";
 
 export default function Analyze() {
   const [file, setFile] = useState(null);
@@ -35,6 +36,8 @@ export default function Analyze() {
       <p className="text-xs uppercase tracking-[0.3em] text-[var(--neon)] mb-2">// forensic upload</p>
       <h1 className="font-heading text-4xl md:text-5xl tracking-tighter mb-2">RUN A SCAN</h1>
       <p className="text-sm text-white/60 font-mono mb-10">&gt; Submit a clip or screenshot. Gemini 3 Flash will deconstruct every frame.</p>
+
+      <QuotaBanner type="video" />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <form onSubmit={onSubmit} className="panel p-6 space-y-5" data-testid="analyze-form">

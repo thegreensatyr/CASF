@@ -3,6 +3,7 @@ import { api } from "../lib/api";
 import { toast } from "sonner";
 import { Search, Loader2, ShieldCheck, ShieldAlert, ShieldX, Share2, Copy, Check } from "lucide-react";
 import TrustedCasinoCTA from "../components/TrustedCasinoCTA";
+import QuotaBanner from "../components/QuotaBanner";
 
 export default function Legitimacy() {
   const [name, setName] = useState("");
@@ -37,6 +38,8 @@ export default function Legitimacy() {
       <p className="text-sm text-white/60 font-mono mb-10">
         &gt; Curated blacklist + Claude Sonnet 4.5 forensic review.
       </p>
+
+      <QuotaBanner type="trust" />
 
       <form onSubmit={submit} className="panel p-6 space-y-4 mb-6" data-testid="legit-form">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

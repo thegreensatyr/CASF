@@ -53,7 +53,9 @@ export default function Navbar() {
           <NavLink to="/" label="Home" />
           <NavLink to="/techniques" label="Tricks" />
           <NavLink to="/reports" label="Reports" />
+          <NavLink to="/compare" label="Compare" />
           <NavLink to="/scams" label="Wall" />
+          <NavLink to="/pricing" label="Pricing" />
           {user && <NavLink to="/dashboard" label="Dashboard" />}
           {user && <NavLink to="/analyze" label="Analyze" />}
           {user && <NavLink to="/legitimacy" label="Verify" />}
