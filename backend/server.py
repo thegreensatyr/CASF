@@ -3,12 +3,14 @@ import re
 import uuid
 import logging
 import shutil
+import asyncio
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from typing import List, Optional
 
 import bcrypt
 import jwt
+import resend
 from dotenv import load_dotenv
 from fastapi import FastAPI, APIRouter, HTTPException, Depends, UploadFile, File, Form, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -36,6 +38,10 @@ DB_NAME = os.environ["DB_NAME"]
 EMERGENT_LLM_KEY = os.environ["EMERGENT_LLM_KEY"]
 JWT_SECRET = os.environ["JWT_SECRET"]
 STRIPE_API_KEY = os.environ.get("STRIPE_API_KEY", "sk_test_emergent")
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
+SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "onboarding@resend.dev")
+if RESEND_API_KEY:
+    resend.api_key = RESEND_API_KEY
 JWT_ALGO = "HS256"
 JWT_EXP_DAYS = 7
 
@@ -79,6 +85,11 @@ class UserOut(BaseModel):
     free_video_scans_used: int = 0
     free_trust_checks_limit: int = FREE_TRUST_CHECKS_LIMIT
     free_video_scans_limit: int = FREE_VIDEO_SCANS_LIMIT
+    email_digest_subscribed: bool = True
+
+
+class DigestPrefReq(BaseModel):
+    subscribed: bool
 
 
 class AuthResp(BaseModel):
@@ -200,6 +211,7 @@ def build_user_out(user: dict) -> UserOut:
         is_premium=bool(user.get("is_premium")),
         free_trust_checks_used=int(user.get("free_trust_checks_used", 0)),
         free_video_scans_used=int(user.get("free_video_scans_used", 0)),
+        email_digest_subscribed=bool(user.get("email_digest_subscribed", True)),
     )
 
 
@@ -1030,6 +1042,203 @@ async def sitemap(request: FastAPIRequest):
 
     xml = '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' + "\n".join(items) + "\n</urlset>"
     return Response(content=xml, media_type="application/xml")
+
+
+# ============= Email Digest (Resend) =============
+def make_unsub_token(user_id: str) -> str:
+    return jwt.encode({"sub": user_id, "purpose": "unsub"}, JWT_SECRET, algorithm=JWT_ALGO)
+
+
+async def build_digest_html(site_url: str) -> dict:
+    """Build the weekly digest content. Returns {subject, html, text, casino_count}."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    # Lowest 5 trust scores in last 7 days (fallback: all-time lowest 5 if <5 recent)
+    docs = await db.legitimacy_reports.find(
+        {"created_at": {"$gte": cutoff}},
+        {"_id": 0, "casino_name": 1, "trust_score": 1, "verdict": 1, "slug": 1},
+    ).sort("trust_score", 1).limit(5).to_list(5)
+    if len(docs) < 5:
+        docs = await db.legitimacy_reports.find(
+            {}, {"_id": 0, "casino_name": 1, "trust_score": 1, "verdict": 1, "slug": 1},
+        ).sort("trust_score", 1).limit(5).to_list(5)
+
+    # Highest trust this week for the "safer alternative" CTA (must have slug)
+    high = await db.legitimacy_reports.find(
+        {"slug": {"$exists": True}}, {"_id": 0, "casino_name": 1, "trust_score": 1, "slug": 1},
+    ).sort("trust_score", -1).limit(1).to_list(1)
+    safe = high[0] if high else None
+
+    # Top affiliate (active, lowest sort_order)
+    affs = await db.affiliate_casinos.find({"active": True}, {"_id": 0}).sort("sort_order", 1).limit(1).to_list(1)
+    aff = affs[0] if affs else None
+
+    rows_html = ""
+    for d in docs:
+        slug = d.get("slug", "")
+        score = d.get("trust_score", 0)
+        color = "#ff3b30" if score < 45 else ("#ffcc00" if score < 75 else "#00ff41")
+        link_open = f'<a href="{site_url}/report/{slug}" style="color:#fff;text-decoration:none;">' if slug else "<div>"
+        link_close = "</a>" if slug else "</div>"
+        rows_html += f"""
+        <tr><td style="padding:14px 0;border-bottom:1px solid #1f1f1f;">
+          {link_open}
+            <table width="100%" cellpadding="0" cellspacing="0"><tr>
+              <td style="font-family:monospace;font-size:14px;color:#fff;">{d.get('casino_name','?')}</td>
+              <td align="right" style="font-family:monospace;font-size:22px;font-weight:700;color:{color};">{score}/100</td>
+            </tr><tr>
+              <td colspan="2" style="font-family:monospace;font-size:11px;color:#888;padding-top:4px;">&gt; {d.get('verdict','')}</td>
+            </tr></table>
+          {link_close}
+        </td></tr>"""
+
+    safe_block = ""
+    if safe:
+        safe_block = f"""
+        <tr><td style="padding:16px;background:#0a0a0a;border:1px solid #00ff41;border-radius:2px;">
+          <p style="margin:0 0 6px;font-family:monospace;font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:#00ff41;">// safer alternative this week</p>
+          <a href="{site_url}/report/{safe['slug']}" style="color:#fff;font-family:'Unbounded',sans-serif;font-size:18px;text-decoration:none;">
+            {safe['casino_name']} <span style="color:#00ff41;">— {safe['trust_score']}/100</span>
+          </a>
+        </td></tr><tr><td style="height:14px;"></td></tr>"""
+
+    aff_block = ""
+    if aff:
+        aff_block = f"""
+        <tr><td style="padding:16px;background:#0a0a0a;border:1px solid #2a2a2a;border-radius:2px;">
+          <p style="margin:0 0 4px;font-family:monospace;font-size:10px;color:#888;">Sponsored ·  Licensed operator</p>
+          <a href="{aff['url']}" style="color:#00ff41;font-family:'Unbounded',sans-serif;font-size:16px;text-decoration:none;">
+            Try {aff['name']} &gt;_
+          </a>
+          <p style="margin:6px 0 0;font-family:monospace;font-size:11px;color:#aaa;">{aff.get('description','')[:140]}</p>
+        </td></tr>"""
+
+    html = f"""
+    <html><body style="margin:0;padding:0;background:#050505;color:#fff;font-family:monospace;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="background:#050505;padding:40px 0;">
+      <tr><td align="center">
+        <table width="600" cellpadding="0" cellspacing="0" style="background:#050505;">
+          <tr><td style="padding:0 24px 24px;">
+            <p style="margin:0;font-family:monospace;font-size:11px;letter-spacing:.3em;text-transform:uppercase;color:#00ff41;">&gt;_ Casino Spotter</p>
+            <h1 style="margin:8px 0 4px;font-family:'Unbounded',sans-serif;font-size:32px;font-weight:900;color:#fff;letter-spacing:-1px;">THIS WEEK'S WORST</h1>
+            <p style="margin:0;font-family:monospace;font-size:12px;color:#888;">The 5 lowest-trust casinos right now</p>
+          </td></tr>
+          <tr><td style="padding:0 24px;">
+            <table width="100%" cellpadding="0" cellspacing="0">{rows_html}</table>
+          </td></tr>
+          <tr><td style="height:30px;"></td></tr>
+          <tr><td style="padding:0 24px;">
+            <table width="100%" cellpadding="0" cellspacing="0">{safe_block}{aff_block}</table>
+          </td></tr>
+          <tr><td style="padding:30px 24px;text-align:center;">
+            <a href="{site_url}/reports" style="display:inline-block;background:#00ff41;color:#000;font-family:'Unbounded',sans-serif;font-weight:700;font-size:12px;text-decoration:none;padding:12px 24px;letter-spacing:.05em;text-transform:uppercase;">View all reports &gt;_</a>
+          </td></tr>
+          <tr><td style="padding:20px 24px;text-align:center;border-top:1px solid #1f1f1f;">
+            <p style="margin:0;font-family:monospace;font-size:10px;color:#666;">
+              18+ · BeGambleAware · Educational use only<br>
+              You're receiving this because you signed up at Casino Spotter.<br>
+              <a href="{{unsub_link}}" style="color:#888;">Unsubscribe</a>
+            </p>
+          </td></tr>
+        </table>
+      </td></tr>
+    </table>
+    </body></html>"""
+
+    text = "Casino Spotter — Weekly Digest\n\nTHIS WEEK'S WORST:\n"
+    for d in docs:
+        text += f"  {d['trust_score']:>3}/100  {d['casino_name']} — {d.get('verdict','')}\n"
+    if safe:
+        text += f"\nSafer alternative: {safe['casino_name']} ({safe['trust_score']}/100)\n{site_url}/report/{safe['slug']}\n"
+    text += f"\nAll reports: {site_url}/reports\n\nUnsubscribe: {{unsub_link}}\n"
+
+    return {
+        "subject": f"{len(docs)} worst casinos this week · Casino Spotter",
+        "html": html,
+        "text": text,
+        "casino_count": len(docs),
+    }
+
+
+@api_router.get("/digest/preview")
+async def digest_preview(user=Depends(require_admin)):
+    site_url = os.environ.get("SITE_URL", "https://scam-spotter-casino.preview.emergentagent.com").rstrip("/")
+    content = await build_digest_html(site_url)
+    sample = content["html"].replace("{unsub_link}", f"{site_url}/unsubscribe?token=SAMPLE")
+    return {"subject": content["subject"], "html": sample, "casino_count": content["casino_count"]}
+
+
+class DigestSendReq(BaseModel):
+    test_only: bool = False
+
+
+@api_router.post("/digest/send")
+async def digest_send(req: DigestSendReq, user=Depends(require_admin)):
+    if not RESEND_API_KEY:
+        raise HTTPException(500, "RESEND_API_KEY not configured")
+    site_url = os.environ.get("SITE_URL", "https://scam-spotter-casino.preview.emergentagent.com").rstrip("/")
+    content = await build_digest_html(site_url)
+
+    # Recipients: admin only if test, otherwise all subscribed users
+    if req.test_only:
+        recipients = [{"id": user["id"], "email": user["email"]}]
+    else:
+        recipients = await db.users.find(
+            {"email_digest_subscribed": {"$ne": False}},
+            {"_id": 0, "id": 1, "email": 1},
+        ).to_list(5000)
+
+    sent = 0
+    failures = []
+    for r in recipients:
+        unsub_link = f"{site_url}/unsubscribe?token={make_unsub_token(r['id'])}"
+        params = {
+            "from": SENDER_EMAIL,
+            "to": [r["email"]],
+            "subject": content["subject"],
+            "html": content["html"].replace("{unsub_link}", unsub_link),
+            "text": content["text"].replace("{unsub_link}", unsub_link),
+        }
+        try:
+            await asyncio.to_thread(resend.Emails.send, params)
+            sent += 1
+        except Exception as e:
+            logger.exception(f"Failed to email {r['email']}: {e}")
+            failures.append({"email": r["email"], "error": str(e)})
+
+    await db.digest_runs.insert_one({
+        "id": str(uuid.uuid4()),
+        "sent": sent,
+        "failures": failures,
+        "test_only": req.test_only,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "sent_by": user["id"],
+    })
+    return {"sent": sent, "failures": len(failures), "total": len(recipients)}
+
+
+@api_router.patch("/user/preferences", response_model=UserOut)
+async def update_preferences(req: DigestPrefReq, user=Depends(get_current_user)):
+    await db.users.update_one(
+        {"id": user["id"]},
+        {"$set": {"email_digest_subscribed": bool(req.subscribed)}},
+    )
+    updated = await db.users.find_one({"id": user["id"]}, {"_id": 0, "password": 0})
+    return build_user_out(updated)
+
+
+@app.get("/api/unsubscribe")
+async def public_unsubscribe(token: str):
+    try:
+        payload = jwt.decode(token, JWT_SECRET, algorithms=[JWT_ALGO])
+        if payload.get("purpose") != "unsub":
+            raise HTTPException(400, "Invalid token")
+        user_id = payload.get("sub")
+    except jwt.PyJWTError:
+        raise HTTPException(400, "Invalid or expired token")
+    res = await db.users.update_one({"id": user_id}, {"$set": {"email_digest_subscribed": False}})
+    if res.matched_count == 0:
+        raise HTTPException(404, "User not found")
+    return {"unsubscribed": True}
 
 
 app.include_router(api_router)

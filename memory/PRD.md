@@ -38,8 +38,13 @@
 - **Scam Wall**: community submissions + up/down voting (auth required to post/vote; public to view). Sort by Top or New. One vote per user per post (upsert; switchable; removable).
 - **Affiliate CTAs (monetization)**: admin-managed casino list shown contextually on (a) low-trust legitimacy reports, (b) technique detail pages, (c) scam wall list, (d) public reports. Click tracking + per-casino stats. `rel="nofollow sponsored"`, 18+ disclaimer.
 - Admin role via `ADMIN_EMAIL` env var; `/admin/affiliates` CRUD page with click stats; `/admin/guide` monetization quick-start with ready-to-paste affiliate-network application draft.
-- **Public shareable trust reports**: `/report/:slug` (no auth) + `/reports` directory page. Auto-generated SEO-friendly slugs (`bet365-a1b2c3`). Copy/X/Reddit share buttons. Drives organic search traffic; every public report has affiliate CTAs when score <60.
-- 100% backend test pass to date: 15 core + 18 scam wall + 18 affiliate = **51/51 total** (public report endpoints added, not yet covered by automated suite)
+- **Public shareable trust reports**: `/report/:slug` (no auth) + `/reports` directory with search/filter/sort. Auto-generated SEO-friendly slugs. Schema.org Review JSON-LD per report for Google ⭐ ratings. Copy/X/Reddit share buttons.
+- **Compare casinos**: `/compare` — pick up to 3, full side-by-side panel with red/green flags, license, verdict.
+- **Freemium + Stripe**: 1 trust check + 1 video scan free, then $9.99/mo Premium via Stripe checkout. `/pricing` page; payment success polling; webhook + local-fallback for unreliable Stripe proxy.
+- **Email digest (Resend)**: `/admin/digest` for admin send + iframe preview. Weekly "Top 5 worst casinos + 1 trusted alternative + 1 affiliate CTA + unsub link" HTML email. User can toggle subscription from `/dashboard`. One-click unsub at `/unsubscribe?token=...`.
+- **SEO**: `/api/sitemap.xml` (39+ URLs, dynamic host), `/robots.txt`, per-page `<title>` updates.
+- **Live activity feed + community quote + authority bar + animated counters** on landing page.
+- 51/51 backend tests pre-Stripe + 12/14 post-Stripe (2 failures were budget/proxy issues now fixed).
 
 ## Prioritized backlog
 - **P1** — Live screen capture via `getDisplayMedia` (browser screen-share) → periodic frame analysis

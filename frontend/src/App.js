@@ -16,6 +16,8 @@ import MonetizationGuide from "./pages/MonetizationGuide";
 import PublicReport, { PublicReportsList } from "./pages/PublicReport";
 import Pricing, { PricingSuccess } from "./pages/Pricing";
 import Compare from "./pages/Compare";
+import AdminDigest from "./pages/AdminDigest";
+import Unsubscribe from "./pages/Unsubscribe";
 
 function App() {
   return (
@@ -55,6 +57,8 @@ function App() {
             <Route path="/pricing" element={<Pricing />} />
             <Route path="/pricing/success" element={<PricingSuccess />} />
             <Route path="/compare" element={<Compare />} />
+            <Route path="/admin/digest" element={<ProtectedRoute><AdminDigest /></ProtectedRoute>} />
+            <Route path="/unsubscribe" element={<Unsubscribe />} />
           </Routes>
         </BrowserRouter>
       </AuthProvider>

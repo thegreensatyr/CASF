@@ -2,17 +2,35 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { ScanLine, ShieldCheck, History } from "lucide-react";
+import { ScanLine, ShieldCheck, History, Mail } from "lucide-react";
+import { toast } from "sonner";
 
 export default function Dashboard() {
   const { user } = useAuth();
   const [analyses, setAnalyses] = useState([]);
   const [legits, setLegits] = useState([]);
+  const [subscribed, setSubscribed] = useState(true);
 
   useEffect(() => {
     api.get("/analysis/history").then((r) => setAnalyses(r.data)).catch(()=>{});
     api.get("/legitimacy/history").then((r) => setLegits(r.data)).catch(()=>{});
   }, []);
+
+  useEffect(() => {
+    if (user) setSubscribed(user.email_digest_subscribed !== false);
+  }, [user]);
+
+  const toggleDigest = async () => {
+    const next = !subscribed;
+    setSubscribed(next);
+    try {
+      await api.patch("/user/preferences", { subscribed: next });
+      toast.success(next ? "Subscribed to weekly digest" : "Unsubscribed from digest");
+    } catch (e) {
+      setSubscribed(!next);
+      toast.error("Failed to update");
+    }
+  };
 
   return (
     <div className="max-w-7xl mx-auto px-6 md:px-12 py-12">
@@ -45,6 +63,25 @@ export default function Dashboard() {
           <h3 className="font-heading text-xl mb-1">Verify casino</h3>
           <p className="text-xs text-white/60 font-mono">Pull a trust report on any operator.</p>
         </Link>
+      </div>
+
+      <div className="panel p-6 mb-12 flex items-center justify-between flex-wrap gap-4" data-testid="digest-pref-panel">
+        <div className="flex items-center gap-3">
+          <Mail className="w-5 h-5 text-[var(--neon)]" />
+          <div>
+            <h3 className="font-heading text-base">Weekly digest email</h3>
+            <p className="text-[11px] text-white/60 font-mono">Top 5 lowest-trust casinos + 1 safer alternative, every Monday.</p>
+          </div>
+        </div>
+        <button
+          onClick={toggleDigest}
+          data-testid="digest-toggle"
+          className={`px-4 py-2 text-xs uppercase tracking-widest font-heading border transition ${
+            subscribed ? "border-[var(--neon)] text-[var(--neon)] bg-[var(--neon-glow)]" : "border-white/30 text-white/60"
+          }`}
+        >
+          {subscribed ? "Subscribed ✓" : "Subscribe"}
+        </button>
       </div>
 
       <h2 className="font-heading text-xl mb-4 flex items-center gap-2">
