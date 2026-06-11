@@ -4,6 +4,7 @@ import { api } from "../lib/api";
 import { ShieldCheck, ShieldAlert, ShieldX, Copy, Check, Twitter, ArrowLeft, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import TrustedCasinoCTA from "../components/TrustedCasinoCTA";
+import CasinoAlertSignup from "../components/CasinoAlertSignup";
 
 export default function PublicReport() {
   const { slug } = useParams();
@@ -19,7 +20,15 @@ export default function PublicReport() {
 
   useEffect(() => {
     if (report) {
-      document.title = `${report.casino_name} — Trust Report ${report.trust_score}/100 · Casino Spotter`;
+      document.title = `${report.casino_name} Review — Scam Spotter Trust Score ${report.trust_score}/100`;
+
+      // SEO meta description using score + top red flag
+      const topFlag = (report.red_flags && report.red_flags[0]) || report.verdict || "";
+      const desc = `${report.casino_name} scored ${report.trust_score}/100 on Casino Spotter. ${topFlag ? "Top red flag: " + topFlag + "." : ""} Read the full AI-generated forensic report.`;
+      let m = document.querySelector('meta[name="description"]');
+      if (!m) { m = document.createElement("meta"); m.name = "description"; document.head.appendChild(m); }
+      m.setAttribute("content", desc.slice(0, 300));
+
       // Inject Schema.org Review JSON-LD for SEO
       const existing = document.getElementById("report-schema");
       if (existing) existing.remove();
@@ -134,6 +143,9 @@ export default function PublicReport() {
 
         <div className="panel p-6 md:col-span-2">
           <h3 className="font-heading text-lg mb-3 text-[var(--neon)]">// Investigative report</h3>
+          <p className="text-xs font-mono text-white/55 italic mb-4 leading-relaxed border-l-2 border-[var(--neon-dim)] pl-3">
+            I ran <span className="text-[var(--neon)] not-italic font-bold">{report.casino_name}</span> through our forensic system. Here's what the analysis found:
+          </p>
           <p className="text-sm font-mono text-white/85 whitespace-pre-line leading-relaxed">{report.report}</p>
         </div>
 
@@ -172,6 +184,8 @@ export default function PublicReport() {
           </Link>
         </div>
       </div>
+
+      <CasinoAlertSignup slug={report.slug} casinoName={report.casino_name} />
 
       <div className="panel p-6 mt-10 text-center">
         <p className="text-xs font-mono text-white/70">

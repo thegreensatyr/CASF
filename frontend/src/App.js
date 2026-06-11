@@ -19,6 +19,7 @@ import Compare from "./pages/Compare";
 import AdminDigest from "./pages/AdminDigest";
 import Unsubscribe from "./pages/Unsubscribe";
 import DeepAudit, { DeepAuditResult } from "./pages/DeepAudit";
+import Verified from "./pages/Verified";
 
 function App() {
   return (
@@ -62,6 +63,7 @@ function App() {
             <Route path="/unsubscribe" element={<Unsubscribe />} />
             <Route path="/audit" element={<ProtectedRoute><DeepAudit /></ProtectedRoute>} />
             <Route path="/audit/result" element={<ProtectedRoute><DeepAuditResult /></ProtectedRoute>} />
+            <Route path="/verified" element={<Verified />} />
           </Routes>
         </BrowserRouter>
       </AuthProvider>

@@ -662,6 +662,60 @@ async def public_legitimacy_report(slug: str):
     return PublicLegitimacyOut(**doc)
 
 
+# ============= Casino score alerts (email capture) =============
+class CasinoAlertReq(BaseModel):
+    email: EmailStr
+    casino_slug: str
+    casino_name: str
+
+
+@api_router.post("/alerts/subscribe-casino")
+async def subscribe_casino_alert(req: CasinoAlertReq):
+    # Idempotent: don't double-subscribe same email+slug
+    existing = await db.casino_alerts.find_one(
+        {"email": req.email.lower(), "casino_slug": req.casino_slug}
+    )
+    if existing:
+        return {"subscribed": True, "already": True}
+    await db.casino_alerts.insert_one({
+        "id": str(uuid.uuid4()),
+        "email": req.email.lower(),
+        "casino_slug": req.casino_slug,
+        "casino_name": req.casino_name,
+        "active": True,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"subscribed": True, "already": False}
+
+
+# ============= Verified Badge Program ($299/year) =============
+class VerifiedApplicationReq(BaseModel):
+    casino_name: str = Field(..., min_length=2, max_length=120)
+    contact_name: str = Field(..., min_length=2, max_length=120)
+    contact_email: EmailStr
+    casino_url: str = Field(..., min_length=4, max_length=500)
+    license: str = Field("", max_length=200)
+    notes: Optional[str] = Field("", max_length=2000)
+
+
+@api_router.post("/verified/apply")
+async def verified_apply(req: VerifiedApplicationReq):
+    record_id = str(uuid.uuid4())
+    await db.verified_applications.insert_one({
+        "id": record_id,
+        **req.model_dump(),
+        "status": "pending",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"application_id": record_id, "status": "received"}
+
+
+@api_router.get("/verified/applications")
+async def list_verified_applications(user=Depends(require_admin)):
+    docs = await db.verified_applications.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return docs
+
+
 @api_router.get("/legitimacy/public", response_model=List[PublicLegitimacyOut])
 async def list_public_reports(limit: int = 20):
     docs = await db.legitimacy_reports.find(
@@ -1172,6 +1226,7 @@ async def sitemap(request: FastAPIRequest):
     items = []
     for u in static_urls:
         items.append(f"<url><loc>{base}{u}</loc><changefreq>weekly</changefreq></url>")
+    items.append(f"<url><loc>{base}/verified</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>")
     for t in techniques:
         items.append(f"<url><loc>{base}/techniques/{t}</loc><changefreq>monthly</changefreq></url>")
     for d in docs:
