@@ -44,6 +44,7 @@ export default function Landing() {
 
           <div className="mt-10 flex flex-wrap gap-3">
             <Link to="/signup" className="btn-neon" data-testid="hero-cta-signup">Start scanning &gt;_</Link>
+            <Link to="/audit" className="btn-ghost" data-testid="hero-cta-audit">Order deep audit · $24.99</Link>
             <Link to="/techniques" className="btn-ghost" data-testid="hero-cta-tricks">See known tricks</Link>
           </div>
 

@@ -51,6 +51,7 @@ FREE_VIDEO_SCANS_LIMIT = 1
 
 # Subscription package (server-side fixed)
 PREMIUM_MONTHLY_USD = 9.99
+DEEP_AUDIT_USD = 24.99
 
 client = AsyncIOMotorClient(MONGO_URL)
 db = client[DB_NAME]
@@ -1016,6 +1017,143 @@ async def stripe_webhook(request: FastAPIRequest):
                 {"$set": {"is_premium": True}},
             )
     return {"received": True}
+
+
+# ============= Deep Audit (one-off $24.99) =============
+class DeepAuditReq(BaseModel):
+    casino_name: str = Field(..., min_length=2, max_length=120)
+    casino_url: Optional[str] = None
+    extra_context: Optional[str] = Field("", max_length=2000)
+    origin_url: str
+
+
+@api_router.post("/audit/checkout")
+async def deep_audit_checkout(req: DeepAuditReq, http_request: FastAPIRequest, user=Depends(get_current_user)):
+    host_url = str(http_request.base_url).rstrip("/")
+    webhook_url = f"{host_url}/api/webhook/stripe"
+    stripe_checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
+
+    origin = req.origin_url.rstrip("/")
+    success_url = f"{origin}/audit/result?session_id={{CHECKOUT_SESSION_ID}}"
+    cancel_url = f"{origin}/audit"
+
+    checkout_req = CheckoutSessionRequest(
+        amount=float(DEEP_AUDIT_USD),
+        currency="usd",
+        success_url=success_url,
+        cancel_url=cancel_url,
+        metadata={
+            "user_id": user["id"],
+            "plan": "deep_audit",
+            "casino_name": req.casino_name,
+            "casino_url": req.casino_url or "",
+            "extra_context": (req.extra_context or "")[:1500],
+        },
+    )
+    session = await stripe_checkout.create_checkout_session(checkout_req)
+    await db.payment_transactions.insert_one({
+        "id": str(uuid.uuid4()),
+        "session_id": session.session_id,
+        "user_id": user["id"],
+        "amount": float(DEEP_AUDIT_USD),
+        "currency": "usd",
+        "metadata": {
+            "plan": "deep_audit",
+            "casino_name": req.casino_name,
+            "casino_url": req.casino_url,
+            "extra_context": req.extra_context or "",
+        },
+        "payment_status": "initiated",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"url": session.url, "session_id": session.session_id}
+
+
+@api_router.get("/audit/result/{session_id}")
+async def deep_audit_result(session_id: str, http_request: FastAPIRequest, user=Depends(get_current_user)):
+    tx = await db.payment_transactions.find_one({"session_id": session_id, "user_id": user["id"]}, {"_id": 0})
+    if not tx:
+        raise HTTPException(404, "Audit not found")
+
+    # If already generated, return cached
+    if tx.get("audit_result"):
+        return {"status": "complete", **tx["audit_result"]}
+
+    # Confirm payment first
+    try:
+        host_url = str(http_request.base_url).rstrip("/")
+        stripe_checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=f"{host_url}/api/webhook/stripe")
+        status_resp = await stripe_checkout.get_checkout_status(session_id)
+        paid = status_resp.payment_status == "paid"
+    except Exception:
+        paid = tx.get("payment_status") == "paid"
+
+    if not paid:
+        return {"status": "pending", "payment_status": tx.get("payment_status", "initiated")}
+
+    # Mark paid (idempotent)
+    if tx.get("payment_status") != "paid":
+        await db.payment_transactions.update_one(
+            {"session_id": session_id},
+            {"$set": {"payment_status": "paid", "paid_at": datetime.now(timezone.utc).isoformat()}},
+        )
+
+    # Generate deep audit
+    md = tx.get("metadata") or {}
+    name = md.get("casino_name", "Unknown casino")
+    url = md.get("casino_url") or "not provided"
+    ctx = md.get("extra_context") or ""
+
+    system_msg = (
+        "You are a senior online-gambling forensics analyst preparing a paid premium audit report. "
+        "Be thorough, specific, and cite reasoning. Cover: license verification, ownership and corporate "
+        "transparency, RNG audit status, RTP disclosure, complaint history (Casinomeister, AskGamblers, "
+        "ThePogg, Trustpilot trends), withdrawal patterns (delays, KYC weaponization), bonus terms (WR, "
+        "max-bet caps, game weighting), responsible-gambling tooling, jurisdictional protection for the "
+        "player. Output in this EXACT format:\n"
+        "TRUST_SCORE: <0-100>\n"
+        "VERDICT: <single line>\n"
+        "EXECUTIVE_SUMMARY: <3-4 sentence laypeople summary>\n"
+        "LICENSING: <paragraph>\n"
+        "OWNERSHIP: <paragraph>\n"
+        "RNG_AND_RTP: <paragraph>\n"
+        "COMPLAINTS_HISTORY: <paragraph>\n"
+        "WITHDRAWAL_RISK: <paragraph>\n"
+        "BONUS_TERMS_ANALYSIS: <paragraph>\n"
+        "RESPONSIBLE_GAMBLING: <paragraph>\n"
+        "FINAL_RECOMMENDATION: <paragraph with specific protect-yourself steps>\n"
+        "RED_FLAGS: <comma-separated>\n"
+        "GREEN_FLAGS: <comma-separated>"
+    )
+
+    try:
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"audit-{session_id}",
+            system_message=system_msg,
+        ).with_model("anthropic", "claude-sonnet-4-5-20250929")
+
+        prompt = (
+            f"Casino: {name}\nURL: {url}\nUser-supplied context: {ctx or '(none)'}\n\n"
+            "Deliver the full premium audit."
+        )
+        response = await chat.send_message(UserMessage(text=prompt))
+        text = str(response)
+    except Exception as e:
+        logger.exception("Deep audit LLM failed")
+        raise HTTPException(500, f"Audit generation failed: {str(e)}")
+
+    audit = {
+        "casino_name": name,
+        "casino_url": url if url != "not provided" else None,
+        "report": text,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.payment_transactions.update_one(
+        {"session_id": session_id},
+        {"$set": {"audit_result": audit}},
+    )
+    return {"status": "complete", **audit}
 
 
 # ============= SEO =============

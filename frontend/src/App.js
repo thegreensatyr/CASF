@@ -18,6 +18,7 @@ import Pricing, { PricingSuccess } from "./pages/Pricing";
 import Compare from "./pages/Compare";
 import AdminDigest from "./pages/AdminDigest";
 import Unsubscribe from "./pages/Unsubscribe";
+import DeepAudit, { DeepAuditResult } from "./pages/DeepAudit";
 
 function App() {
   return (
@@ -59,6 +60,8 @@ function App() {
             <Route path="/compare" element={<Compare />} />
             <Route path="/admin/digest" element={<ProtectedRoute><AdminDigest /></ProtectedRoute>} />
             <Route path="/unsubscribe" element={<Unsubscribe />} />
+            <Route path="/audit" element={<ProtectedRoute><DeepAudit /></ProtectedRoute>} />
+            <Route path="/audit/result" element={<ProtectedRoute><DeepAuditResult /></ProtectedRoute>} />
           </Routes>
         </BrowserRouter>
       </AuthProvider>

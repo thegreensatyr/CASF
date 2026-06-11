@@ -160,6 +160,19 @@ export default function PublicReport() {
         <TrustedCasinoCTA source={`public-report:${report.slug}`} headline="SAFER ALTERNATIVES" />
       )}
 
+      <div className="panel p-6 mt-8 border-[var(--neon)]/40">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-xs uppercase tracking-[0.3em] text-[var(--neon)] mb-1">// premium upgrade</p>
+            <h3 className="font-heading text-xl">Want a deeper investigation on {report.casino_name}?</h3>
+            <p className="text-[11px] font-mono text-white/60 mt-1">Full licensing trace · ownership · complaints · withdrawal-risk · bonus-terms breakdown · personal recommendations.</p>
+          </div>
+          <Link to={`/audit?prefill=${encodeURIComponent(report.casino_name)}`} className="btn-neon text-xs whitespace-nowrap" data-testid="deep-audit-cta-from-report">
+            Order audit · $24.99 &gt;_
+          </Link>
+        </div>
+      </div>
+
       <div className="panel p-6 mt-10 text-center">
         <p className="text-xs font-mono text-white/70">
           Want a forensic AI scan of your own casino sessions?
