@@ -44,6 +44,7 @@
 - **Email digest (Resend)**: `/admin/digest` for admin send + iframe preview. Weekly "Top 5 worst casinos + 1 trusted alternative + 1 affiliate CTA + unsub link" HTML email. User can toggle subscription from `/dashboard`. One-click unsub at `/unsubscribe?token=...`.
 - **SEO**: `/api/sitemap.xml` (39+ URLs, dynamic host), `/robots.txt`, per-page `<title>` updates.
 - **Live activity feed + community quote + authority bar + animated counters** on landing page.
+- **Forgot password** (Feb 2026): `/forgot-password` + `/reset-password` pages, single-use tokens (1h TTL) stored in `password_resets`, Resend email + supervisor log fallback + admin `debug_link` in response (for preview while DNS pending).
 - 51/51 backend tests pre-Stripe + 12/14 post-Stripe (2 failures were budget/proxy issues now fixed).
 
 ## Prioritized backlog

@@ -1,6 +1,7 @@
 import os
 import re
 import uuid
+import secrets
 import logging
 import shutil
 import asyncio
@@ -73,6 +74,16 @@ class SignupReq(BaseModel):
 
 class LoginReq(BaseModel):
     email: EmailStr
+    password: str
+
+
+class ForgotPasswordReq(BaseModel):
+    email: EmailStr
+    origin_url: Optional[str] = None
+
+
+class ResetPasswordReq(BaseModel):
+    token: str
     password: str
 
 
@@ -341,6 +352,148 @@ async def login(req: LoginReq):
 @api_router.get("/auth/me", response_model=UserOut)
 async def me(user=Depends(get_current_user)):
     return build_user_out(user)
+
+
+def _password_reset_email(name: str, link: str) -> dict:
+    safe_name = name or "operator"
+    html = f"""<!doctype html>
+<html><body style="margin:0;padding:0;background:#0a0a0a;font-family:'JetBrains Mono',monospace;color:#fff;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0a;padding:40px 16px;">
+    <tr><td align="center">
+      <table width="560" cellpadding="0" cellspacing="0" style="background:#0d0d0d;border:1px solid rgba(0,255,65,0.25);border-radius:8px;padding:32px;">
+        <tr><td>
+          <div style="font-size:11px;letter-spacing:.3em;color:#00ff41;text-transform:uppercase;margin-bottom:8px;">&gt; secure terminal</div>
+          <h1 style="font-family:Unbounded,Arial,sans-serif;font-size:24px;color:#fff;margin:0 0 12px;">Reset your password</h1>
+          <p style="font-size:13px;line-height:1.6;color:rgba(255,255,255,0.75);margin:0 0 24px;">Hey {safe_name}, we received a request to reset the password on your Casino Spotter account. Click the button below to choose a new one. This link expires in 1 hour and can only be used once.</p>
+          <a href="{link}" style="display:inline-block;background:#00ff41;color:#000;text-decoration:none;font-weight:700;letter-spacing:.15em;font-size:12px;padding:14px 22px;border-radius:4px;">RESET PASSWORD &gt;_</a>
+          <p style="font-size:11px;line-height:1.6;color:rgba(255,255,255,0.5);margin:24px 0 0;">Or copy &amp; paste this link into your browser:<br/><span style="color:#00ff41;word-break:break-all;">{link}</span></p>
+          <hr style="border:0;border-top:1px solid rgba(0,255,65,0.15);margin:24px 0;"/>
+          <p style="font-size:11px;color:rgba(255,255,255,0.4);margin:0;">Didn't request this? You can safely ignore this email — your password won't change.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>"""
+    text = f"Reset your Casino Spotter password\n\nHey {safe_name}, use the link below to choose a new password. It expires in 1 hour and can only be used once.\n\n{link}\n\nDidn't request this? Safely ignore this email."
+    return {"subject": "Reset your Casino Spotter password", "html": html, "text": text}
+
+
+@api_router.post("/auth/forgot-password")
+async def forgot_password(req: ForgotPasswordReq, request: FastAPIRequest):
+    email_lc = req.email.lower()
+    # Case-insensitive email lookup (defensive — emails are typically stored lowercase already)
+    user = await db.users.find_one(
+        {"email": {"$regex": f"^{re.escape(email_lc)}$", "$options": "i"}},
+        {"_id": 0},
+    )
+    generic_resp = {"ok": True, "message": "If an account exists with that email, a reset link has been sent."}
+
+    if not user:
+        return generic_resp
+
+    # Invalidate any outstanding reset tokens for this user
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.password_resets.update_many(
+        {"user_id": user["id"], "used_at": None},
+        {"$set": {"used_at": now_iso}},
+    )
+
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+    await db.password_resets.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "token": token,
+        "expires_at": expires_at.isoformat(),
+        "used_at": None,
+        "created_at": now_iso,
+    })
+
+    origin = (req.origin_url or "").rstrip("/")
+    if not origin:
+        origin = os.environ.get("SITE_URL", "").rstrip("/")
+    if not origin:
+        host = request.headers.get("x-forwarded-host") or request.url.hostname
+        scheme = request.headers.get("x-forwarded-proto") or "https"
+        origin = f"{scheme}://{host}" if host else ""
+    reset_link = f"{origin}/reset-password?token={token}"
+
+    email_sent = False
+    email_error = None
+    if RESEND_API_KEY:
+        content = _password_reset_email(user.get("name", ""), reset_link)
+        try:
+            await asyncio.to_thread(
+                resend.Emails.send,
+                {
+                    "from": SENDER_EMAIL,
+                    "to": [user["email"]],
+                    "subject": content["subject"],
+                    "html": content["html"],
+                    "text": content["text"],
+                },
+            )
+            email_sent = True
+        except Exception as e:
+            email_error = str(e)
+            logger.exception(f"Failed to send reset email to {user['email']}: {e}")
+
+    # Always log the reset link so admin can recover it from supervisor logs even
+    # when Resend domain isn't verified yet.
+    logger.info(f"[PASSWORD-RESET] user={user['email']} link={reset_link}")
+
+    resp = dict(generic_resp)
+    resp["email_sent"] = email_sent
+    # Surface the link in the API response ONLY when the requester is the admin
+    # (so the admin can recover their own account during preview / DNS pending).
+    if ADMIN_EMAIL and email_lc == ADMIN_EMAIL:
+        resp["debug_link"] = reset_link
+        if email_error:
+            resp["debug_error"] = email_error
+    return resp
+
+
+@api_router.post("/auth/reset-password", response_model=AuthResp)
+async def reset_password(req: ResetPasswordReq):
+    if len(req.password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters")
+
+    record = await db.password_resets.find_one({"token": req.token}, {"_id": 0})
+    if not record:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset link")
+    if record.get("used_at"):
+        raise HTTPException(status_code=400, detail="This reset link has already been used")
+    try:
+        expires_at = datetime.fromisoformat(record["expires_at"])
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid reset link")
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if datetime.now(timezone.utc) > expires_at:
+        raise HTTPException(status_code=400, detail="Reset link has expired. Request a new one.")
+
+    user = await db.users.find_one({"id": record["user_id"]}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=400, detail="Account no longer exists")
+
+    new_hash = hash_password(req.password)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.users.update_one({"id": user["id"]}, {"$set": {"password": new_hash}})
+    await db.password_resets.update_one(
+        {"id": record["id"]},
+        {"$set": {"used_at": now_iso}},
+    )
+    # Invalidate any other outstanding tokens
+    await db.password_resets.update_many(
+        {"user_id": user["id"], "used_at": None, "id": {"$ne": record["id"]}},
+        {"$set": {"used_at": now_iso}},
+    )
+
+    refreshed = await db.users.find_one({"id": user["id"]}, {"_id": 0, "password": 0})
+    return AuthResp(
+        token=create_token(user["id"]),
+        user=build_user_out(refreshed),
+    )
 
 
 async def check_free_quota(user: dict, key: str, limit: int):

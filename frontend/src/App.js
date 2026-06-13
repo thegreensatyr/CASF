@@ -5,7 +5,7 @@ import { AuthProvider } from "./context/AuthContext";
 import Navbar from "./components/Navbar";
 import ProtectedRoute from "./components/ProtectedRoute";
 import Landing from "./pages/Landing";
-import { Login, Signup } from "./pages/Auth";
+import { Login, Signup, ForgotPassword, ResetPassword } from "./pages/Auth";
 import { Techniques, TechniqueDetail } from "./pages/Techniques";
 import Analyze from "./pages/Analyze";
 import Legitimacy from "./pages/Legitimacy";
@@ -44,6 +44,8 @@ function App() {
             <Route path="/" element={<Landing />} />
             <Route path="/login" element={<Login />} />
             <Route path="/signup" element={<Signup />} />
+            <Route path="/forgot-password" element={<ForgotPassword />} />
+            <Route path="/reset-password" element={<ResetPassword />} />
             <Route path="/techniques" element={<Techniques />} />
             <Route path="/techniques/:slug" element={<TechniqueDetail />} />
             <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
