@@ -21,6 +21,7 @@ import Unsubscribe from "./pages/Unsubscribe";
 import DeepAudit, { DeepAuditResult } from "./pages/DeepAudit";
 import Verified from "./pages/Verified";
 import Live from "./pages/Live";
+import LiveSessionDetail from "./pages/LiveSessionDetail";
 
 function App() {
   return (
@@ -68,6 +69,7 @@ function App() {
             <Route path="/audit/result" element={<ProtectedRoute><DeepAuditResult /></ProtectedRoute>} />
             <Route path="/verified" element={<Verified />} />
             <Route path="/live" element={<ProtectedRoute><Live /></ProtectedRoute>} />
+            <Route path="/live/sessions/:id" element={<ProtectedRoute><LiveSessionDetail /></ProtectedRoute>} />
           </Routes>
         </BrowserRouter>
       </AuthProvider>

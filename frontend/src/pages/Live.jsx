@@ -429,8 +429,15 @@ export default function Live() {
             </div>
           )}
 
-          <div className="flex gap-3 mt-6">
+          <div className="flex gap-3 mt-6 flex-wrap">
             <Link to="/dashboard" className="btn-ghost text-xs" data-testid="live-report-dashboard">&lt; Back to dashboard</Link>
+            <Link
+              to={`/live/sessions/${finalReport.id}`}
+              className="btn-ghost text-xs"
+              data-testid="live-report-detail"
+            >
+              View full timeline
+            </Link>
             <button onClick={() => { setFinalReport(null); setFeed([]); }} className="btn-neon text-xs" data-testid="live-report-new">
               RUN ANOTHER &gt;_
             </button>
