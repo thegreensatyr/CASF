@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { api } from "../lib/api";
-import { Radio, ArrowLeft, AlertTriangle, Clock, Loader2 } from "lucide-react";
+import { toast } from "sonner";
+import { Radio, ArrowLeft, AlertTriangle, Clock, Loader2, Globe, Copy, EyeOff } from "lucide-react";
 
 export default function LiveSessionDetail() {
   const { id } = useParams();
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
+  const [publishing, setPublishing] = useState(false);
 
   useEffect(() => {
     api.get(`/live/session/${id}`)
@@ -15,6 +17,35 @@ export default function LiveSessionDetail() {
       .catch((e) => setErr(e?.response?.data?.detail || "Session not found"))
       .finally(() => setLoading(false));
   }, [id]);
+
+  async function publish() {
+    setPublishing(true);
+    try {
+      const { data } = await api.post(`/live/session/${id}/publish`);
+      setSession(data);
+      toast.success("Promoted to public report.");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not publish");
+    } finally { setPublishing(false); }
+  }
+
+  async function unpublish() {
+    if (!window.confirm("Unpublish this report? The public URL will stop working.")) return;
+    setPublishing(true);
+    try {
+      const { data } = await api.post(`/live/session/${id}/unpublish`);
+      setSession(data);
+      toast.success("Report unpublished.");
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not unpublish");
+    } finally { setPublishing(false); }
+  }
+
+  function copyShare() {
+    const url = `${window.location.origin}/live-report/${session.public_slug}`;
+    navigator.clipboard.writeText(url);
+    toast.success("Public URL copied.");
+  }
 
   if (loading) {
     return (
@@ -81,6 +112,73 @@ export default function LiveSessionDetail() {
             ))}
           </div>
         )}
+      </div>
+
+      {/* Promote to public report */}
+      <div className="panel p-5 mb-6 border border-[var(--neon)]/30" data-testid="live-detail-publish-panel">
+        <div className="flex items-start gap-3 flex-wrap">
+          <Globe className="w-5 h-5 text-[var(--neon)] mt-0.5 shrink-0" />
+          <div className="flex-1 min-w-[240px]">
+            {session.public_slug ? (
+              <>
+                <h3 className="text-xs uppercase tracking-widest font-heading text-[var(--neon)] mb-1">PUBLISHED</h3>
+                <p className="text-xs font-mono text-white/70 mb-3">
+                  This session is live as a public report — indexed in our sitemap and shareable anywhere.
+                </p>
+                <div className="flex items-center gap-2 mb-3 panel p-2 bg-black/60">
+                  <code className="text-[11px] text-[var(--neon)] font-mono truncate" data-testid="live-detail-public-url">
+                    {typeof window !== "undefined" ? `${window.location.origin}/live-report/${session.public_slug}` : `/live-report/${session.public_slug}`}
+                  </code>
+                </div>
+                <div className="flex gap-2 flex-wrap">
+                  <button onClick={copyShare} className="btn-neon text-xs flex items-center gap-1" data-testid="live-detail-copy-url">
+                    <Copy className="w-3 h-3" /> COPY LINK
+                  </button>
+                  <Link
+                    to={`/live-report/${session.public_slug}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="btn-ghost text-xs"
+                    data-testid="live-detail-view-public"
+                  >
+                    Open public page
+                  </Link>
+                  <button
+                    onClick={unpublish}
+                    disabled={publishing}
+                    className="btn-ghost text-xs flex items-center gap-1 text-white/50 hover:text-[var(--danger)]"
+                    data-testid="live-detail-unpublish"
+                  >
+                    <EyeOff className="w-3 h-3" /> Unpublish
+                  </button>
+                </div>
+              </>
+            ) : session.techniques_aggregated.length === 0 ? (
+              <>
+                <h3 className="text-xs uppercase tracking-widest font-heading text-white/70 mb-1">PROMOTE TO PUBLIC REPORT</h3>
+                <p className="text-xs font-mono text-white/40">
+                  Only sessions with at least one flagged technique can be promoted.
+                </p>
+              </>
+            ) : (
+              <>
+                <h3 className="text-xs uppercase tracking-widest font-heading text-white/70 mb-1">PROMOTE TO PUBLIC REPORT</h3>
+                <p className="text-xs font-mono text-white/60 mb-3">
+                  Turn this session into a public, shareable evidence page (SEO-indexed, no login required). The casino name &amp; observed techniques become a permanent URL.
+                </p>
+                <button
+                  onClick={publish}
+                  disabled={publishing}
+                  className="btn-neon text-xs flex items-center gap-2"
+                  data-testid="live-detail-publish"
+                >
+                  {publishing ? <Loader2 className="w-3 h-3 animate-spin" /> : <Globe className="w-3 h-3" />}
+                  {publishing ? "PUBLISHING..." : "PROMOTE TO PUBLIC >_"}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
       </div>
 
       {/* AI summary */}

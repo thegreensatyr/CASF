@@ -153,6 +153,21 @@ class LiveSessionOut(BaseModel):
     techniques_aggregated: List[str]
     summary: Optional[str]
     frames: List[LiveFrameOut] = []
+    public_slug: Optional[str] = None
+
+
+class PublicLiveSessionOut(BaseModel):
+    public_slug: str
+    game_type: str
+    casino_name: Optional[str]
+    started_at: str
+    ended_at: Optional[str]
+    frame_count: int
+    techniques_aggregated: List[str]
+    summary: Optional[str]
+    frames: List[LiveFrameOut] = []
+    headline: str
+    published_at: str
 
 
 class DigestPrefReq(BaseModel):
@@ -949,52 +964,10 @@ async def live_session_end(req: LiveSessionEndReq, user=Depends(get_current_user
         session["ended_at"] = datetime.now(timezone.utc).isoformat()
         session["summary"] = summary
 
-    frames_out = [LiveFrameOut(**f) for f in session.get("frames", [])]
-    return LiveSessionOut(
-        id=session["id"],
-        game_type=session["game_type"],
-        casino_name=session.get("casino_name"),
-        started_at=session["started_at"],
-        ended_at=session.get("ended_at"),
-        is_trial=bool(session.get("is_trial")),
-        max_seconds=int(session.get("max_seconds", LIVE_PREMIUM_MAX_SECONDS)),
-        cadence_seconds=int(session.get("cadence_seconds", LIVE_CADENCE_SECONDS)),
-        frame_count=len(session.get("frames", [])),
-        techniques_aggregated=session.get("techniques_aggregated", []),
-        summary=session.get("summary"),
-        frames=frames_out,
-    )
+    return _live_session_to_out(session, include_frames=True)
 
 
-@api_router.get("/live/sessions", response_model=List[LiveSessionOut])
-async def live_session_list(user=Depends(get_current_user)):
-    docs = await db.live_sessions.find(
-        {"user_id": user["id"]}, {"_id": 0}
-    ).sort("started_at", -1).to_list(100)
-    out = []
-    for d in docs:
-        out.append(LiveSessionOut(
-            id=d["id"],
-            game_type=d.get("game_type", "slot"),
-            casino_name=d.get("casino_name"),
-            started_at=d["started_at"],
-            ended_at=d.get("ended_at"),
-            is_trial=bool(d.get("is_trial")),
-            max_seconds=int(d.get("max_seconds", LIVE_PREMIUM_MAX_SECONDS)),
-            cadence_seconds=int(d.get("cadence_seconds", LIVE_CADENCE_SECONDS)),
-            frame_count=len(d.get("frames", [])),
-            techniques_aggregated=d.get("techniques_aggregated", []),
-            summary=d.get("summary"),
-            frames=[],
-        ))
-    return out
-
-
-@api_router.get("/live/session/{session_id}", response_model=LiveSessionOut)
-async def live_session_detail(session_id: str, user=Depends(get_current_user)):
-    d = await db.live_sessions.find_one({"id": session_id, "user_id": user["id"]}, {"_id": 0})
-    if not d:
-        raise HTTPException(404, "Session not found")
+def _live_session_to_out(d: dict, include_frames: bool = True) -> LiveSessionOut:
     return LiveSessionOut(
         id=d["id"],
         game_type=d.get("game_type", "slot"),
@@ -1007,8 +980,130 @@ async def live_session_detail(session_id: str, user=Depends(get_current_user)):
         frame_count=len(d.get("frames", [])),
         techniques_aggregated=d.get("techniques_aggregated", []),
         summary=d.get("summary"),
-        frames=[LiveFrameOut(**f) for f in d.get("frames", [])],
+        frames=[LiveFrameOut(**f) for f in d.get("frames", [])] if include_frames else [],
+        public_slug=d.get("public_slug"),
     )
+
+
+def _build_live_headline(d: dict) -> str:
+    techs = d.get("techniques_aggregated") or []
+    casino = d.get("casino_name") or "an unnamed casino"
+    game = d.get("game_type") or "game"
+    if not techs:
+        return f"{casino}: {game} session — no manipulation patterns flagged"
+    head = ", ".join(techs[:3])
+    suffix = f" (+{len(techs) - 3} more)" if len(techs) > 3 else ""
+    return f"{casino}: live {game} capture flagged {head}{suffix}"
+
+
+@api_router.get("/live/sessions", response_model=List[LiveSessionOut])
+async def live_session_list(user=Depends(get_current_user)):
+    docs = await db.live_sessions.find(
+        {"user_id": user["id"]}, {"_id": 0}
+    ).sort("started_at", -1).to_list(100)
+    return [_live_session_to_out(d, include_frames=False) for d in docs]
+
+
+@api_router.get("/live/session/{session_id}", response_model=LiveSessionOut)
+async def live_session_detail(session_id: str, user=Depends(get_current_user)):
+    d = await db.live_sessions.find_one({"id": session_id, "user_id": user["id"]}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "Session not found")
+    return _live_session_to_out(d, include_frames=True)
+
+
+@api_router.post("/live/session/{session_id}/publish", response_model=LiveSessionOut)
+async def live_session_publish(session_id: str, user=Depends(get_current_user)):
+    d = await db.live_sessions.find_one({"id": session_id, "user_id": user["id"]}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "Session not found")
+    if not (d.get("techniques_aggregated") or []):
+        raise HTTPException(
+            status_code=400,
+            detail="Only sessions with at least one flagged technique can be promoted to a public report.",
+        )
+    if d.get("public_slug"):
+        # Idempotent — already published, just return as-is
+        return _live_session_to_out(d, include_frames=True)
+
+    slug_base = d.get("casino_name") or d.get("game_type") or "live-session"
+    public_slug = make_slug(f"live-{slug_base}")
+    headline = _build_live_headline(d)
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    await db.live_sessions.update_one(
+        {"id": session_id},
+        {"$set": {
+            "public_slug": public_slug,
+            "headline": headline,
+            "published_at": now_iso,
+        }},
+    )
+    d["public_slug"] = public_slug
+    d["headline"] = headline
+    d["published_at"] = now_iso
+    return _live_session_to_out(d, include_frames=True)
+
+
+@api_router.post("/live/session/{session_id}/unpublish", response_model=LiveSessionOut)
+async def live_session_unpublish(session_id: str, user=Depends(get_current_user)):
+    d = await db.live_sessions.find_one({"id": session_id, "user_id": user["id"]}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "Session not found")
+    await db.live_sessions.update_one(
+        {"id": session_id},
+        {"$unset": {"public_slug": "", "headline": "", "published_at": ""}},
+    )
+    d.pop("public_slug", None)
+    return _live_session_to_out(d, include_frames=True)
+
+
+@api_router.get("/live/public", response_model=List[PublicLiveSessionOut])
+async def list_public_live_sessions(limit: int = 20):
+    docs = await db.live_sessions.find(
+        {"public_slug": {"$exists": True, "$ne": None}},
+        {"_id": 0, "user_id": 0, "id": 0, "is_trial": 0, "max_seconds": 0, "cadence_seconds": 0},
+    ).sort("published_at", -1).to_list(min(limit, 100))
+    out = []
+    for d in docs:
+        out.append(PublicLiveSessionOut(
+            public_slug=d["public_slug"],
+            game_type=d.get("game_type", "slot"),
+            casino_name=d.get("casino_name"),
+            started_at=d["started_at"],
+            ended_at=d.get("ended_at"),
+            frame_count=len(d.get("frames", [])),
+            techniques_aggregated=d.get("techniques_aggregated", []),
+            summary=d.get("summary"),
+            frames=[LiveFrameOut(**f) for f in d.get("frames", [])],
+            headline=d.get("headline") or _build_live_headline(d),
+            published_at=d.get("published_at") or d["started_at"],
+        ))
+    return out
+
+
+@api_router.get("/live/public/{slug}", response_model=PublicLiveSessionOut)
+async def get_public_live_session(slug: str):
+    d = await db.live_sessions.find_one(
+        {"public_slug": slug},
+        {"_id": 0, "user_id": 0, "id": 0, "is_trial": 0, "max_seconds": 0, "cadence_seconds": 0},
+    )
+    if not d:
+        raise HTTPException(404, "Public live report not found")
+    return PublicLiveSessionOut(
+        public_slug=d["public_slug"],
+        game_type=d.get("game_type", "slot"),
+        casino_name=d.get("casino_name"),
+        started_at=d["started_at"],
+        ended_at=d.get("ended_at"),
+        frame_count=len(d.get("frames", [])),
+        techniques_aggregated=d.get("techniques_aggregated", []),
+        summary=d.get("summary"),
+        frames=[LiveFrameOut(**f) for f in d.get("frames", [])],
+        headline=d.get("headline") or _build_live_headline(d),
+        published_at=d.get("published_at") or d["started_at"],
+    )
+
 
 
 # Known scam/legit casinos lookup data
@@ -1717,6 +1812,14 @@ async def sitemap(request: FastAPIRequest):
     for d in docs:
         lastmod = (d.get("created_at") or "")[:10]
         items.append(f"<url><loc>{base}/report/{d['slug']}</loc><lastmod>{lastmod}</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>")
+
+    live_pubs = await db.live_sessions.find(
+        {"public_slug": {"$exists": True, "$ne": None}},
+        {"_id": 0, "public_slug": 1, "published_at": 1},
+    ).to_list(2000)
+    for d in live_pubs:
+        lastmod = (d.get("published_at") or "")[:10]
+        items.append(f"<url><loc>{base}/live-report/{d['public_slug']}</loc><lastmod>{lastmod}</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>")
 
     xml = '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' + "\n".join(items) + "\n</urlset>"
     return Response(content=xml, media_type="application/xml")
