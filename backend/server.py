@@ -1,6 +1,7 @@
 import os
 import re
 import uuid
+import base64
 import secrets
 import logging
 import shutil
@@ -98,6 +99,60 @@ class UserOut(BaseModel):
     free_trust_checks_limit: int = FREE_TRUST_CHECKS_LIMIT
     free_video_scans_limit: int = FREE_VIDEO_SCANS_LIMIT
     email_digest_subscribed: bool = True
+    live_trial_used: bool = False
+
+
+class LiveSessionStartReq(BaseModel):
+    game_type: str = Field(default="slot")
+    casino_name: Optional[str] = ""
+
+
+class LiveSessionStartResp(BaseModel):
+    session_id: str
+    cadence_seconds: int
+    max_seconds: int
+    is_trial: bool
+
+
+class LiveFrameReq(BaseModel):
+    session_id: str
+    frame_data_url: str          # data:image/jpeg;base64,...
+    elapsed_seconds: int
+
+
+class LiveFrameResp(BaseModel):
+    frame_idx: int
+    techniques_detected: List[str]
+    note: str
+    should_continue: bool
+    remaining_seconds: int
+
+
+class LiveSessionEndReq(BaseModel):
+    session_id: str
+
+
+class LiveFrameOut(BaseModel):
+    idx: int
+    elapsed_seconds: int
+    techniques_detected: List[str]
+    note: str
+    created_at: str
+
+
+class LiveSessionOut(BaseModel):
+    id: str
+    game_type: str
+    casino_name: Optional[str]
+    started_at: str
+    ended_at: Optional[str]
+    is_trial: bool
+    max_seconds: int
+    cadence_seconds: int
+    frame_count: int
+    techniques_aggregated: List[str]
+    summary: Optional[str]
+    frames: List[LiveFrameOut] = []
 
 
 class DigestPrefReq(BaseModel):
@@ -224,6 +279,7 @@ def build_user_out(user: dict) -> UserOut:
         free_trust_checks_used=int(user.get("free_trust_checks_used", 0)),
         free_video_scans_used=int(user.get("free_video_scans_used", 0)),
         email_digest_subscribed=bool(user.get("email_digest_subscribed", True)),
+        live_trial_used=bool(user.get("live_trial_used", False)),
     )
 
 
@@ -677,6 +733,274 @@ async def get_analysis(analysis_id: str, user=Depends(get_current_user)):
     if not doc:
         raise HTTPException(404, "Not found")
     return AnalysisOut(**doc)
+
+
+# ============= Live screen-capture mode =============
+LIVE_CADENCE_SECONDS = 15
+LIVE_PREMIUM_MAX_SECONDS = 180          # 3 min hard cap
+LIVE_TRIAL_MAX_SECONDS = 60             # free 60s trial (one per user)
+
+
+@api_router.post("/live/session/start", response_model=LiveSessionStartResp)
+async def live_session_start(req: LiveSessionStartReq, user=Depends(get_current_user)):
+    is_premium = bool(user.get("is_premium"))
+    if not is_premium and user.get("live_trial_used"):
+        raise HTTPException(
+            status_code=402,
+            detail="Free 60s live-mode trial already used. Upgrade to Premium ($9.99/mo) for unlimited 3-min sessions.",
+        )
+
+    is_trial = not is_premium
+    max_seconds = LIVE_TRIAL_MAX_SECONDS if is_trial else LIVE_PREMIUM_MAX_SECONDS
+    session_id = str(uuid.uuid4())
+    await db.live_sessions.insert_one({
+        "id": session_id,
+        "user_id": user["id"],
+        "game_type": req.game_type,
+        "casino_name": (req.casino_name or "").strip() or None,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "ended_at": None,
+        "is_trial": is_trial,
+        "max_seconds": max_seconds,
+        "cadence_seconds": LIVE_CADENCE_SECONDS,
+        "frames": [],
+        "techniques_aggregated": [],
+        "summary": None,
+    })
+    if is_trial:
+        # Mark trial used immediately to prevent parallel-session abuse
+        await db.users.update_one({"id": user["id"]}, {"$set": {"live_trial_used": True}})
+
+    return LiveSessionStartResp(
+        session_id=session_id,
+        cadence_seconds=LIVE_CADENCE_SECONDS,
+        max_seconds=max_seconds,
+        is_trial=is_trial,
+    )
+
+
+def _strip_data_url(data_url: str) -> tuple[str, bytes]:
+    """Returns (ext, raw_bytes)."""
+    if not data_url.startswith("data:"):
+        raise HTTPException(400, "Invalid frame data URL")
+    try:
+        header, b64 = data_url.split(",", 1)
+        # header like: data:image/jpeg;base64
+        mime = header.split(";")[0].replace("data:", "")
+        ext = "jpg" if "jpeg" in mime else mime.split("/")[-1]
+        raw = base64.b64decode(b64)
+    except Exception:
+        raise HTTPException(400, "Could not decode frame")
+    if len(raw) > 4 * 1024 * 1024:  # 4 MB per frame ceiling
+        raise HTTPException(400, "Frame too large (max 4MB)")
+    return ext, raw
+
+
+@api_router.post("/live/frame", response_model=LiveFrameResp)
+async def live_frame(req: LiveFrameReq, user=Depends(get_current_user)):
+    session = await db.live_sessions.find_one(
+        {"id": req.session_id, "user_id": user["id"]}, {"_id": 0}
+    )
+    if not session:
+        raise HTTPException(404, "Session not found")
+    if session.get("ended_at"):
+        raise HTTPException(400, "Session already ended")
+    max_seconds = int(session.get("max_seconds", LIVE_PREMIUM_MAX_SECONDS))
+    if int(req.elapsed_seconds) >= max_seconds:
+        raise HTTPException(400, "Session time limit reached")
+
+    ext, raw = _strip_data_url(req.frame_data_url)
+    file_id = str(uuid.uuid4())
+    save_path = UPLOAD_DIR / f"live-{file_id}.{ext}"
+    save_path.write_bytes(raw)
+
+    mime = "image/jpeg" if ext in ("jpg", "jpeg") else f"image/{ext}"
+    system_msg = (
+        "You are a real-time casino-game forensic analyst observing a player's screen frame. "
+        "Identify any visible manipulation, dark pattern, or psychological trick the operator "
+        "is using IN THIS SPECIFIC FRAME (near-miss programming, loss-disguised-as-win, "
+        "slow-reveal, false RTP display, fake live-dealer shills, push-notification urgency, "
+        "bonus traps, etc). Be terse — this analysis fires every 15 seconds.\n\n"
+        "Respond EXACTLY in this format on two lines and nothing else:\n"
+        "TECHNIQUES: <comma-separated short slugs, or 'none'>\n"
+        "NOTE: <one sentence (max 25 words) explaining what you observed>"
+    )
+
+    techniques: list = []
+    note = ""
+    try:
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=f"live-{req.session_id}-{file_id}",
+            system_message=system_msg,
+        ).with_model("gemini", "gemini-3-flash-preview")
+        file_content = FileContentWithMimeType(file_path=str(save_path), mime_type=mime)
+        prompt = (
+            f"Game: {session.get('game_type','slot')} | "
+            f"Casino: {session.get('casino_name') or 'unknown'} | "
+            f"Elapsed: {req.elapsed_seconds}s. Analyze this single live frame."
+        )
+        response = await chat.send_message(UserMessage(text=prompt, file_contents=[file_content]))
+        response_text = str(response)
+        for line in response_text.split("\n"):
+            stripped = line.strip()
+            if stripped.upper().startswith("TECHNIQUES:"):
+                raw_t = stripped.split(":", 1)[1].strip()
+                if raw_t and raw_t.lower() != "none":
+                    techniques = [t.strip() for t in raw_t.split(",") if t.strip()]
+            elif stripped.upper().startswith("NOTE:"):
+                note = stripped.split(":", 1)[1].strip()
+    except Exception as e:
+        logger.exception("Live frame analysis failed")
+        note = f"frame skipped: {str(e)[:80]}"
+    finally:
+        try:
+            save_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    frame_idx = len(session.get("frames", []))
+    frame_doc = {
+        "idx": frame_idx,
+        "elapsed_seconds": int(req.elapsed_seconds),
+        "techniques_detected": techniques,
+        "note": note,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    # Merge techniques into aggregated set
+    aggregated = set(session.get("techniques_aggregated", []))
+    aggregated.update(techniques)
+
+    await db.live_sessions.update_one(
+        {"id": req.session_id},
+        {
+            "$push": {"frames": frame_doc},
+            "$set": {"techniques_aggregated": sorted(aggregated)},
+        },
+    )
+
+    remaining = max(0, max_seconds - int(req.elapsed_seconds) - LIVE_CADENCE_SECONDS)
+    return LiveFrameResp(
+        frame_idx=frame_idx,
+        techniques_detected=techniques,
+        note=note,
+        should_continue=remaining > 0,
+        remaining_seconds=remaining,
+    )
+
+
+@api_router.post("/live/session/end", response_model=LiveSessionOut)
+async def live_session_end(req: LiveSessionEndReq, user=Depends(get_current_user)):
+    session = await db.live_sessions.find_one(
+        {"id": req.session_id, "user_id": user["id"]}, {"_id": 0}
+    )
+    if not session:
+        raise HTTPException(404, "Session not found")
+
+    if not session.get("ended_at"):
+        # Generate a brief summary from the frames
+        frames = session.get("frames", [])
+        aggregated = session.get("techniques_aggregated", [])
+        summary = ""
+        if frames:
+            try:
+                lines = "\n".join(
+                    f"- t={f['elapsed_seconds']}s: {', '.join(f.get('techniques_detected') or ['no-flag'])} — {f.get('note','')}"
+                    for f in frames
+                )
+                summary_prompt = (
+                    f"You observed {len(frames)} live frames from a {session.get('game_type')} session "
+                    f"on casino '{session.get('casino_name') or 'unknown'}'. Per-frame notes:\n{lines}\n\n"
+                    "Write a 4-6 sentence editorial summary in plain English for the player: "
+                    "what manipulation patterns showed up over the session, what to watch for next time, "
+                    "and one concrete protective action. Do NOT use markdown."
+                )
+                chat = LlmChat(
+                    api_key=EMERGENT_LLM_KEY,
+                    session_id=f"live-summary-{req.session_id}",
+                    system_message="You are a casino-forensics analyst summarizing a live observation session.",
+                ).with_model("gemini", "gemini-3-flash-preview")
+                summary = str(await chat.send_message(UserMessage(text=summary_prompt)))
+            except Exception:
+                logger.exception("Live summary failed")
+                summary = (
+                    f"Session observed {len(frames)} frames. "
+                    f"Techniques flagged: {', '.join(aggregated) if aggregated else 'none'}."
+                )
+        else:
+            summary = "Session ended before any frames were analyzed."
+
+        await db.live_sessions.update_one(
+            {"id": req.session_id},
+            {"$set": {
+                "ended_at": datetime.now(timezone.utc).isoformat(),
+                "summary": summary,
+            }},
+        )
+        session["ended_at"] = datetime.now(timezone.utc).isoformat()
+        session["summary"] = summary
+
+    frames_out = [LiveFrameOut(**f) for f in session.get("frames", [])]
+    return LiveSessionOut(
+        id=session["id"],
+        game_type=session["game_type"],
+        casino_name=session.get("casino_name"),
+        started_at=session["started_at"],
+        ended_at=session.get("ended_at"),
+        is_trial=bool(session.get("is_trial")),
+        max_seconds=int(session.get("max_seconds", LIVE_PREMIUM_MAX_SECONDS)),
+        cadence_seconds=int(session.get("cadence_seconds", LIVE_CADENCE_SECONDS)),
+        frame_count=len(session.get("frames", [])),
+        techniques_aggregated=session.get("techniques_aggregated", []),
+        summary=session.get("summary"),
+        frames=frames_out,
+    )
+
+
+@api_router.get("/live/sessions", response_model=List[LiveSessionOut])
+async def live_session_list(user=Depends(get_current_user)):
+    docs = await db.live_sessions.find(
+        {"user_id": user["id"]}, {"_id": 0}
+    ).sort("started_at", -1).to_list(100)
+    out = []
+    for d in docs:
+        out.append(LiveSessionOut(
+            id=d["id"],
+            game_type=d.get("game_type", "slot"),
+            casino_name=d.get("casino_name"),
+            started_at=d["started_at"],
+            ended_at=d.get("ended_at"),
+            is_trial=bool(d.get("is_trial")),
+            max_seconds=int(d.get("max_seconds", LIVE_PREMIUM_MAX_SECONDS)),
+            cadence_seconds=int(d.get("cadence_seconds", LIVE_CADENCE_SECONDS)),
+            frame_count=len(d.get("frames", [])),
+            techniques_aggregated=d.get("techniques_aggregated", []),
+            summary=d.get("summary"),
+            frames=[],
+        ))
+    return out
+
+
+@api_router.get("/live/session/{session_id}", response_model=LiveSessionOut)
+async def live_session_detail(session_id: str, user=Depends(get_current_user)):
+    d = await db.live_sessions.find_one({"id": session_id, "user_id": user["id"]}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "Session not found")
+    return LiveSessionOut(
+        id=d["id"],
+        game_type=d.get("game_type", "slot"),
+        casino_name=d.get("casino_name"),
+        started_at=d["started_at"],
+        ended_at=d.get("ended_at"),
+        is_trial=bool(d.get("is_trial")),
+        max_seconds=int(d.get("max_seconds", LIVE_PREMIUM_MAX_SECONDS)),
+        cadence_seconds=int(d.get("cadence_seconds", LIVE_CADENCE_SECONDS)),
+        frame_count=len(d.get("frames", [])),
+        techniques_aggregated=d.get("techniques_aggregated", []),
+        summary=d.get("summary"),
+        frames=[LiveFrameOut(**f) for f in d.get("frames", [])],
+    )
 
 
 # Known scam/legit casinos lookup data

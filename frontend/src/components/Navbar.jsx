@@ -59,6 +59,7 @@ export default function Navbar() {
           {user && <NavLink to="/audit" label="Deep Audit" />}
           {user && <NavLink to="/dashboard" label="Dashboard" />}
           {user && <NavLink to="/analyze" label="Analyze" />}
+          {user && <NavLink to="/live" label="Live" />}
           {user && <NavLink to="/legitimacy" label="Verify" />}
           {user?.is_admin && <NavLink to="/admin/affiliates" label="Admin" />}
         </nav>

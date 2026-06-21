@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { ScanLine, ShieldCheck, History, Mail } from "lucide-react";
+import { ScanLine, ShieldCheck, History, Mail, Radio } from "lucide-react";
 import { toast } from "sonner";
 
 export default function Dashboard() {
@@ -52,11 +52,19 @@ export default function Dashboard() {
         }/>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-12">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-12">
         <Link to="/analyze" className="panel p-8 hover:bg-white/[0.02] transition" data-testid="quick-analyze">
           <ScanLine className="w-6 h-6 text-[var(--neon)] mb-3" />
           <h3 className="font-heading text-xl mb-1">New scan</h3>
           <p className="text-xs text-white/60 font-mono">Drop a clip or screenshot for forensic analysis.</p>
+        </Link>
+        <Link to="/live" className="panel p-8 hover:bg-white/[0.02] transition relative overflow-hidden" data-testid="quick-live">
+          <div className="absolute top-3 right-3 flex items-center gap-1 text-[10px] uppercase tracking-widest font-mono text-[var(--neon)]">
+            <span className="w-1.5 h-1.5 rounded-full bg-[var(--neon)] animate-pulse" /> new
+          </div>
+          <Radio className="w-6 h-6 text-[var(--neon)] mb-3" />
+          <h3 className="font-heading text-xl mb-1">Live capture</h3>
+          <p className="text-xs text-white/60 font-mono">Share your screen and get real-time technique alerts as you play.</p>
         </Link>
         <Link to="/legitimacy" className="panel p-8 hover:bg-white/[0.02] transition" data-testid="quick-legit">
           <ShieldCheck className="w-6 h-6 text-[var(--neon)] mb-3" />
@@ -64,6 +72,7 @@ export default function Dashboard() {
           <p className="text-xs text-white/60 font-mono">Pull a trust report on any operator.</p>
         </Link>
       </div>
+
 
       <div className="panel p-6 mb-12 flex items-center justify-between flex-wrap gap-4" data-testid="digest-pref-panel">
         <div className="flex items-center gap-3">
