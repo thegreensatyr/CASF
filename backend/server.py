@@ -554,7 +554,7 @@ async def reset_password(req: ResetPasswordReq):
 
 async def check_free_quota(user: dict, key: str, limit: int):
     """Check quota WITHOUT incrementing. Raise 402 if exhausted."""
-    if user.get("is_premium"):
+    if user.get("is_premium") or is_admin_user(user):
         return
     if int(user.get(key, 0)) >= limit:
         raise HTTPException(
@@ -564,8 +564,8 @@ async def check_free_quota(user: dict, key: str, limit: int):
 
 
 async def bump_free_quota(user: dict, key: str):
-    """Increment quota after a successful operation. No-op for premium users."""
-    if user.get("is_premium"):
+    """Increment quota after a successful operation. No-op for premium / admin users."""
+    if user.get("is_premium") or is_admin_user(user):
         return
     await db.users.update_one({"id": user["id"]}, {"$inc": {key: 1}})
 
@@ -743,14 +743,14 @@ LIVE_TRIAL_MAX_SECONDS = 60             # free 60s trial (one per user)
 
 @api_router.post("/live/session/start", response_model=LiveSessionStartResp)
 async def live_session_start(req: LiveSessionStartReq, user=Depends(get_current_user)):
-    is_premium = bool(user.get("is_premium"))
-    if not is_premium and user.get("live_trial_used"):
+    is_unlimited = bool(user.get("is_premium")) or is_admin_user(user)
+    if not is_unlimited and user.get("live_trial_used"):
         raise HTTPException(
             status_code=402,
             detail="Free 60s live-mode trial already used. Upgrade to Premium ($9.99/mo) for unlimited 3-min sessions.",
         )
 
-    is_trial = not is_premium
+    is_trial = not is_unlimited
     max_seconds = LIVE_TRIAL_MAX_SECONDS if is_trial else LIVE_PREMIUM_MAX_SECONDS
     session_id = str(uuid.uuid4())
     await db.live_sessions.insert_one({
@@ -767,9 +767,9 @@ async def live_session_start(req: LiveSessionStartReq, user=Depends(get_current_
         "techniques_aggregated": [],
         "summary": None,
     })
-    if is_trial:
-        # Mark trial used immediately to prevent parallel-session abuse
-        await db.users.update_one({"id": user["id"]}, {"$set": {"live_trial_used": True}})
+    # NOTE: We deliberately do NOT flip live_trial_used here. We flip it only
+    # after the first successful frame is analyzed (see /live/frame). This
+    # prevents a cancelled OS share dialog from burning the user's only trial.
 
     return LiveSessionStartResp(
         session_id=session_id,
@@ -879,6 +879,14 @@ async def live_frame(req: LiveFrameReq, user=Depends(get_current_user)):
             "$set": {"techniques_aggregated": sorted(aggregated)},
         },
     )
+
+    # If this is a trial session AND the first successful frame, only NOW burn
+    # the user's trial — so cancelling the OS share dialog doesn't waste it.
+    if session.get("is_trial") and frame_idx == 0 and not user.get("live_trial_used"):
+        await db.users.update_one(
+            {"id": user["id"]},
+            {"$set": {"live_trial_used": True}},
+        )
 
     remaining = max(0, max_seconds - int(req.elapsed_seconds) - LIVE_CADENCE_SECONDS)
     return LiveFrameResp(

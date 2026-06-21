@@ -4,7 +4,7 @@ import { useAuth } from "../context/AuthContext";
 
 export default function QuotaBanner({ type }) {
   const { user } = useAuth();
-  if (!user || user.is_premium) return null;
+  if (!user || user.is_premium || user.is_admin) return null;
 
   const used = type === "video"
     ? (user.free_video_scans_used ?? 0)

@@ -28,8 +28,10 @@ export default function Live() {
   const [finalReport, setFinalReport] = useState(null);
 
   const isPremium = !!user?.is_premium;
+  const isAdmin = !!user?.is_admin;
+  const isUnlimited = isPremium || isAdmin;
   const trialUsed = !!user?.live_trial_used;
-  const blockedNoTrial = !isPremium && trialUsed;
+  const blockedNoTrial = !isUnlimited && trialUsed;
 
   // Cleanup on unmount
   useEffect(() => {
@@ -200,7 +202,7 @@ export default function Live() {
     }
   }
 
-  const maxSec = session?.max_seconds || (isPremium ? 180 : 60);
+  const maxSec = session?.max_seconds || (isUnlimited ? 180 : 60);
   const progressPct = Math.min(100, Math.round((elapsed / maxSec) * 100));
   const remaining = Math.max(0, maxSec - elapsed);
 
@@ -223,7 +225,7 @@ export default function Live() {
       </div>
 
       {/* Trial / Premium gating banner */}
-      {!isPremium && (
+      {!isUnlimited && (
         <div className="panel p-4 mb-6 flex items-start justify-between gap-4" data-testid="live-trial-banner">
           <div className="flex items-start gap-3">
             <Sparkles className="w-4 h-4 text-[var(--neon)] mt-0.5 shrink-0" />
