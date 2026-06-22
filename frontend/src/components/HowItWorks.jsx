@@ -36,7 +36,7 @@ export default function HowItWorks() {
           <div>
             <p className="text-xs uppercase tracking-[0.3em] text-[var(--neon)] mb-2">// how it works</p>
             <h2 className="font-heading text-3xl md:text-5xl tracking-tighter">
-              THREE STEPS. <span className="neon-text">ZERO BULLSHIT.</span>
+              THREE STEPS. <span className="neon-text">ZERO NOISE.</span>
             </h2>
           </div>
           <span className="hidden md:inline text-xs text-white/40 font-mono">avg scan: 4 seconds</span>
