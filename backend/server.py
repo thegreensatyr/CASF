@@ -29,6 +29,8 @@ from emergentintegrations.payments.stripe.checkout import (
 from fastapi import Request as FastAPIRequest
 from fastapi.responses import Response
 
+from technique_articles import TECHNIQUE_ARTICLES
+
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
@@ -268,6 +270,28 @@ def make_slug(casino_name: str) -> str:
     return f"{base}-{uuid.uuid4().hex[:6]}"
 
 
+class TechniqueFAQ(BaseModel):
+    q: str
+    a: str
+
+
+class TechniqueArticleSection(BaseModel):
+    heading: str
+    body: str
+
+
+class TechniqueArticle(BaseModel):
+    seo_title: str
+    meta_description: str
+    published_date: str
+    updated_date: Optional[str] = None
+    reading_time_min: int
+    hero_subhead: str
+    sections: List[TechniqueArticleSection]
+    faqs: List[TechniqueFAQ]
+    related_slugs: List[str] = []
+
+
 class TechniqueOut(BaseModel):
     slug: str
     name: str
@@ -277,6 +301,7 @@ class TechniqueOut(BaseModel):
     how_it_works: str
     how_to_spot: str
     severity: str
+    article: Optional[TechniqueArticle] = None
 
 
 # ============= Auth helpers =============
@@ -664,16 +689,24 @@ async def recent_activity(limit: int = 8):
     return events[:limit]
 
 
+def _technique_with_article(t: dict) -> dict:
+    """Merge the long-form article (if exists) into the technique dict."""
+    article = TECHNIQUE_ARTICLES.get(t["slug"])
+    if article:
+        return {**t, "article": article}
+    return t
+
+
 @api_router.get("/techniques", response_model=List[TechniqueOut])
 async def list_techniques():
-    return [TechniqueOut(**t) for t in TECHNIQUES_SEED]
+    return [TechniqueOut(**_technique_with_article(t)) for t in TECHNIQUES_SEED]
 
 
 @api_router.get("/techniques/{slug}", response_model=TechniqueOut)
 async def get_technique(slug: str):
     for t in TECHNIQUES_SEED:
         if t["slug"] == slug:
-            return TechniqueOut(**t)
+            return TechniqueOut(**_technique_with_article(t))
     raise HTTPException(404, "Technique not found")
 
 
@@ -1989,7 +2022,16 @@ async def sitemap(request: FastAPIRequest):
         items.append(f"<url><loc>{base}{u}</loc><changefreq>weekly</changefreq></url>")
     items.append(f"<url><loc>{base}/verified</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>")
     for t in techniques:
-        items.append(f"<url><loc>{base}/techniques/{t}</loc><changefreq>monthly</changefreq></url>")
+        # Long-form articles get higher priority + monthly lastmod
+        if t in TECHNIQUE_ARTICLES:
+            lastmod = TECHNIQUE_ARTICLES[t].get("updated_date") or TECHNIQUE_ARTICLES[t].get("published_date", "")
+            items.append(
+                f"<url><loc>{base}/techniques/{t}</loc>"
+                f"<lastmod>{lastmod}</lastmod>"
+                f"<changefreq>monthly</changefreq><priority>0.9</priority></url>"
+            )
+        else:
+            items.append(f"<url><loc>{base}/techniques/{t}</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>")
     for d in docs:
         lastmod = (d.get("created_at") or "")[:10]
         items.append(f"<url><loc>{base}/report/{d['slug']}</loc><lastmod>{lastmod}</lastmod><changefreq>weekly</changefreq><priority>0.8</priority></url>")
