@@ -23,6 +23,8 @@ import Verified from "./pages/Verified";
 import Live from "./pages/Live";
 import LiveSessionDetail from "./pages/LiveSessionDetail";
 import PublicLiveReport from "./pages/PublicLiveReport";
+import Dispute from "./pages/Dispute";
+import AdminDisputes from "./pages/AdminDisputes";
 
 function App() {
   return (
@@ -72,6 +74,8 @@ function App() {
             <Route path="/live" element={<ProtectedRoute><Live /></ProtectedRoute>} />
             <Route path="/live/sessions/:id" element={<ProtectedRoute><LiveSessionDetail /></ProtectedRoute>} />
             <Route path="/live-report/:slug" element={<PublicLiveReport />} />
+            <Route path="/dispute" element={<Dispute />} />
+            <Route path="/admin/disputes" element={<ProtectedRoute><AdminDisputes /></ProtectedRoute>} />
           </Routes>
         </BrowserRouter>
       </AuthProvider>

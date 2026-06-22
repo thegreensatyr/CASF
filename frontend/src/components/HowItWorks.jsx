@@ -55,7 +55,7 @@ export default function HowItWorks() {
               n="02"
               Icon={Cpu}
               title="AI DECODES THE TRICK"
-              body="Gemini 3 Flash multimodal scrubs every frame. Claude Sonnet 4.5 cross-references known operator patterns. The AI doesn't just say 'this is a scam' — it explains exactly which technique is being used and why your brain is being targeted."
+              body="Gemini 3 Flash multimodal scrubs every frame. Claude Sonnet 4.5 cross-references known operator patterns. The AI doesn't just label patterns — it explains exactly which technique is being used and why your brain is being targeted."
             />
             <Step
               n="03"

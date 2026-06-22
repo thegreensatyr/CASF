@@ -62,6 +62,7 @@ export default function Navbar() {
           {user && <NavLink to="/live" label="Live" />}
           {user && <NavLink to="/legitimacy" label="Verify" />}
           {user?.is_admin && <NavLink to="/admin/affiliates" label="Admin" />}
+          {user?.is_admin && <NavLink to="/admin/disputes" label="Disputes" />}
         </nav>
 
         <div className="flex items-center gap-2">

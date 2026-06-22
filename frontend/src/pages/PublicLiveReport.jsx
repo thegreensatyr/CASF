@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import axios from "axios";
-import { Radio, AlertTriangle, Clock, Loader2, Share2, ShieldCheck } from "lucide-react";
+import { Radio, AlertTriangle, Clock, Loader2, Share2, ShieldCheck, MessageSquare } from "lucide-react";
+import LegalDisclaimer from "../components/LegalDisclaimer";
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 
 export default function PublicLiveReport() {
   const { slug } = useParams();
   const [data, setData] = useState(null);
+  const [disputes, setDisputes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
 
@@ -16,6 +18,9 @@ export default function PublicLiveReport() {
       .then((r) => setData(r.data))
       .catch((e) => setErr(e?.response?.data?.detail || "Report not found"))
       .finally(() => setLoading(false));
+    axios.get(`${BACKEND_URL}/api/disputes/public/live/${slug}`)
+      .then((r) => setDisputes(r.data))
+      .catch(() => {});
   }, [slug]);
 
   useEffect(() => {
@@ -139,6 +144,28 @@ export default function PublicLiveReport() {
         ))}
       </ol>
 
+      {/* Operator response (right-of-response approved) */}
+      {disputes.length > 0 && (
+        <div className="panel p-6 mb-6 border border-yellow-400/30 bg-yellow-400/[0.02]" data-testid="public-live-disputes">
+          <h2 className="text-xs uppercase tracking-widest font-heading mb-3 text-yellow-400 flex items-center gap-2">
+            <MessageSquare className="w-3 h-3" /> Operator response{disputes.length > 1 ? "s" : ""}
+          </h2>
+          {disputes.map((d, i) => (
+            <div key={i} className="mb-4 last:mb-0">
+              <p className="text-xs font-mono text-white/50 mb-2">
+                <strong className="text-white/80">{d.casino_name}</strong>
+                {d.contact_name && <> · {d.contact_name}</>}
+                {d.role && <> ({d.role})</>}
+                <span className="text-white/30"> · published {new Date(d.approved_at).toLocaleDateString()}</span>
+              </p>
+              <p className="text-sm font-mono text-white/80 leading-relaxed whitespace-pre-line border-l-2 border-yellow-400/50 pl-3">
+                {d.response_text}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Share + CTA */}
       <div className="panel p-6 text-center">
         <ShieldCheck className="w-8 h-8 text-[var(--neon)] mx-auto mb-3" />
@@ -160,6 +187,8 @@ export default function PublicLiveReport() {
           </button>
         </div>
       </div>
+
+      <LegalDisclaimer slug={slug} type="live" />
     </div>
   );
 }

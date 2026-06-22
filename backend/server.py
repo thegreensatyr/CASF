@@ -174,6 +174,47 @@ class DigestPrefReq(BaseModel):
     subscribed: bool
 
 
+class DisputeReq(BaseModel):
+    target_type: str = Field(..., pattern="^(trust|live|scam_post)$")
+    target_slug: Optional[str] = None
+    target_id: Optional[str] = None
+    casino_name: str
+    contact_email: EmailStr
+    contact_name: Optional[str] = ""
+    role: Optional[str] = ""  # e.g. "Compliance Officer", "Legal counsel"
+    response_text: str = Field(..., min_length=20, max_length=4000)
+
+
+class DisputeOut(BaseModel):
+    id: str
+    target_type: str
+    target_slug: Optional[str]
+    target_id: Optional[str]
+    casino_name: str
+    contact_email: str
+    contact_name: Optional[str]
+    role: Optional[str]
+    response_text: str
+    status: str  # pending | approved | rejected
+    submitted_at: str
+    reviewed_at: Optional[str] = None
+    review_notes: Optional[str] = None
+
+
+class PublicDisputeOut(BaseModel):
+    """Sanitized public-facing dispute (no contact email exposed)."""
+    casino_name: str
+    contact_name: Optional[str]
+    role: Optional[str]
+    response_text: str
+    approved_at: str
+
+
+class DisputeModerateReq(BaseModel):
+    status: str = Field(..., pattern="^(approved|rejected)$")
+    review_notes: Optional[str] = ""
+
+
 class AuthResp(BaseModel):
     token: str
     user: UserOut
@@ -355,7 +396,7 @@ TECHNIQUES_SEED = [
         "name": "Unaudited or Rigged RNG",
         "category": "Game Integrity",
         "short": "Random number generators that aren't independently certified — and can be tuned against you.",
-        "description": "A legitimate RNG is independently audited (eCOGRA, iTech Labs, GLI). Scam casinos either fake certifications or run uncertified games.",
+        "description": "A legitimate RNG is independently audited (eCOGRA, iTech Labs, GLI). Operators flagged by player communities often either display fake certifications or run uncertified games.",
         "how_it_works": "Server-side RNG can be biased. Without third-party audit, outcomes can favor the house arbitrarily.",
         "how_to_spot": "Look for genuine eCOGRA/iTech Labs/GLI seals — and verify on the auditor's website. Fake seals are common.",
         "severity": "critical",
@@ -1106,6 +1147,143 @@ async def get_public_live_session(slug: str):
 
 
 
+# ============= Right-of-response (Disputes) =============
+async def _validate_dispute_target(target_type: str, slug: Optional[str], target_id: Optional[str]):
+    """Return True if the target actually exists. Prevents spam disputes on non-existent reports."""
+    if target_type == "trust":
+        if not slug:
+            return False
+        d = await db.legitimacy_reports.find_one({"slug": slug, "public": True}, {"_id": 0, "id": 1})
+        return d is not None
+    if target_type == "live":
+        if not slug:
+            return False
+        d = await db.live_sessions.find_one({"public_slug": slug}, {"_id": 0, "id": 1})
+        return d is not None
+    if target_type == "scam_post":
+        if not target_id:
+            return False
+        d = await db.scams.find_one({"id": target_id}, {"_id": 0, "id": 1})
+        return d is not None
+    return False
+
+
+@api_router.post("/disputes", response_model=DisputeOut)
+async def submit_dispute(req: DisputeReq, request: FastAPIRequest):
+    """Public endpoint — anyone can file a right-of-response. Goes to admin moderation queue."""
+    ok = await _validate_dispute_target(req.target_type, req.target_slug, req.target_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Referenced report does not exist or is not public")
+
+    # Light per-email + per-IP rate limit (max 3 pending per email in last 24h)
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    recent_count = await db.disputes.count_documents({
+        "contact_email": req.contact_email.lower(),
+        "submitted_at": {"$gte": cutoff},
+    })
+    if recent_count >= 3:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many disputes submitted from this email in the last 24 hours.",
+        )
+
+    dispute_id = str(uuid.uuid4())
+    doc = {
+        "id": dispute_id,
+        "target_type": req.target_type,
+        "target_slug": req.target_slug,
+        "target_id": req.target_id,
+        "casino_name": req.casino_name.strip(),
+        "contact_email": req.contact_email.lower(),
+        "contact_name": (req.contact_name or "").strip(),
+        "role": (req.role or "").strip(),
+        "response_text": req.response_text.strip(),
+        "status": "pending",
+        "submitted_at": datetime.now(timezone.utc).isoformat(),
+        "reviewed_at": None,
+        "review_notes": None,
+        "submitter_ip": request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+            or (request.client.host if request.client else ""),
+    }
+    await db.disputes.insert_one(doc)
+
+    # Notify admin via Resend (best-effort)
+    if RESEND_API_KEY and ADMIN_EMAIL:
+        try:
+            html = f"""<p>New right-of-response dispute filed.</p>
+<ul>
+  <li><strong>Type:</strong> {req.target_type}</li>
+  <li><strong>Target:</strong> {req.target_slug or req.target_id}</li>
+  <li><strong>Casino:</strong> {req.casino_name}</li>
+  <li><strong>From:</strong> {req.contact_name or '—'} &lt;{req.contact_email}&gt; ({req.role or 'no role given'})</li>
+</ul>
+<blockquote style="border-left:3px solid #00ff41;padding-left:12px;color:#555;">{req.response_text}</blockquote>
+<p>Moderate at /admin/disputes</p>"""
+            await asyncio.to_thread(resend.Emails.send, {
+                "from": SENDER_EMAIL,
+                "to": [ADMIN_EMAIL],
+                "subject": f"[Dispute] {req.casino_name} — {req.target_type}",
+                "html": html,
+            })
+        except Exception:
+            logger.exception("Failed to email admin about dispute")
+
+    return DisputeOut(**{k: v for k, v in doc.items() if k != "submitter_ip"})
+
+
+@api_router.get("/disputes/public/{target_type}/{slug}", response_model=List[PublicDisputeOut])
+async def list_public_disputes(target_type: str, slug: str):
+    """Returns APPROVED disputes for a given public report (operator responses)."""
+    if target_type not in ("trust", "live"):
+        return []
+    docs = await db.disputes.find(
+        {"target_type": target_type, "target_slug": slug, "status": "approved"},
+        {"_id": 0, "contact_email": 0, "submitter_ip": 0},
+    ).sort("reviewed_at", 1).to_list(20)
+    return [
+        PublicDisputeOut(
+            casino_name=d["casino_name"],
+            contact_name=d.get("contact_name") or None,
+            role=d.get("role") or None,
+            response_text=d["response_text"],
+            approved_at=d.get("reviewed_at") or d["submitted_at"],
+        )
+        for d in docs
+    ]
+
+
+@api_router.get("/admin/disputes", response_model=List[DisputeOut])
+async def admin_list_disputes(status_filter: Optional[str] = None, user=Depends(get_current_user)):
+    if not is_admin_user(user):
+        raise HTTPException(403, "Admin only")
+    q = {}
+    if status_filter in ("pending", "approved", "rejected"):
+        q["status"] = status_filter
+    docs = await db.disputes.find(q, {"_id": 0, "submitter_ip": 0}).sort("submitted_at", -1).to_list(200)
+    return [DisputeOut(**d) for d in docs]
+
+
+@api_router.post("/admin/disputes/{dispute_id}/moderate", response_model=DisputeOut)
+async def admin_moderate_dispute(dispute_id: str, req: DisputeModerateReq, user=Depends(get_current_user)):
+    if not is_admin_user(user):
+        raise HTTPException(403, "Admin only")
+    d = await db.disputes.find_one({"id": dispute_id}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "Dispute not found")
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.disputes.update_one(
+        {"id": dispute_id},
+        {"$set": {
+            "status": req.status,
+            "reviewed_at": now_iso,
+            "review_notes": req.review_notes or "",
+        }},
+    )
+    d.update({"status": req.status, "reviewed_at": now_iso, "review_notes": req.review_notes or ""})
+    d.pop("submitter_ip", None)
+    return DisputeOut(**d)
+
+
 # Known scam/legit casinos lookup data
 KNOWN_CASINOS = {
     "scams": [
@@ -1138,13 +1316,16 @@ async def research_casino(req: LegitimacyReq, user=Depends(get_current_user)):
         "You are an online-gambling regulatory and forensic analyst. Given a casino name (and optional URL), "
         "produce a trust assessment based on publicly known information about licensing (MGA, UKGC, Curacao, "
         "Kahnawake, etc.), player complaints, payment history, RNG audits, and ownership transparency. "
-        "Be objective. If you don't know the operator, say so and rely on red-flag heuristics. "
+        "Be objective and use measured, defensible language. NEVER state as fact that an operator is a 'scam' "
+        "or is engaged in criminal conduct — instead, describe observed patterns ('reports of delayed withdrawals', "
+        "'concerns about license verification', 'multiple unresolved complaints on AskGamblers'). "
+        "If you don't know the operator, say so and rely on red-flag heuristics. "
         "Respond EXACTLY in this format:\n"
         "TRUST_SCORE: <integer 0-100>\n"
-        "VERDICT: <one-line verdict like 'Reputable', 'Cautious', 'Avoid', 'Likely Scam'>\n"
-        "RED_FLAGS: <comma-separated short phrases, or 'none'>\n"
+        "VERDICT: <one-line verdict, choose from: 'Reputable', 'Generally Trusted', 'Caution Advised', 'High Risk', 'Insufficient Information'>\n"
+        "RED_FLAGS: <comma-separated short phrases describing observed patterns, or 'none'>\n"
         "GREEN_FLAGS: <comma-separated short phrases, or 'none'>\n"
-        "REPORT: <3-5 paragraph plain-language report>"
+        "REPORT: <3-5 paragraph plain-language analysis. Frame all concerns as observations and reports, not accusations.>"
     )
 
     try:
