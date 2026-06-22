@@ -73,6 +73,7 @@ class SignupReq(BaseModel):
     email: EmailStr
     password: str
     name: str
+    signup_source: Optional[str] = None  # e.g. "reddit:near-miss", "google", "direct"
 
 
 class LoginReq(BaseModel):
@@ -467,6 +468,7 @@ async def signup(req: SignupReq):
         "name": req.name,
         "password": hash_password(req.password),
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "signup_source": (req.signup_source or "direct")[:60],
     }
     await db.users.insert_one(user_doc)
     return AuthResp(
@@ -1294,6 +1296,26 @@ async def admin_list_disputes(status_filter: Optional[str] = None, user=Depends(
         q["status"] = status_filter
     docs = await db.disputes.find(q, {"_id": 0, "submitter_ip": 0}).sort("submitted_at", -1).to_list(200)
     return [DisputeOut(**d) for d in docs]
+
+
+@api_router.get("/admin/signup-sources")
+async def admin_signup_sources(user=Depends(get_current_user)):
+    """Attribution analytics — total signups grouped by source."""
+    if not is_admin_user(user):
+        raise HTTPException(403, "Admin only")
+    pipeline = [
+        {"$group": {
+            "_id": {"$ifNull": ["$signup_source", "direct"]},
+            "count": {"$sum": 1},
+            "premium_count": {"$sum": {"$cond": [{"$eq": ["$is_premium", True]}, 1, 0]}},
+        }},
+        {"$sort": {"count": -1}},
+    ]
+    rows = [r async for r in db.users.aggregate(pipeline)]
+    return [
+        {"source": r["_id"], "signups": r["count"], "premium_converts": r.get("premium_count", 0)}
+        for r in rows
+    ]
 
 
 @api_router.post("/admin/disputes/{dispute_id}/moderate", response_model=DisputeOut)

@@ -25,6 +25,7 @@ import LiveSessionDetail from "./pages/LiveSessionDetail";
 import PublicLiveReport from "./pages/PublicLiveReport";
 import Dispute from "./pages/Dispute";
 import AdminDisputes from "./pages/AdminDisputes";
+import FromReddit from "./pages/FromReddit";
 
 function App() {
   return (
@@ -76,6 +77,8 @@ function App() {
             <Route path="/live-report/:slug" element={<PublicLiveReport />} />
             <Route path="/dispute" element={<Dispute />} />
             <Route path="/admin/disputes" element={<ProtectedRoute><AdminDisputes /></ProtectedRoute>} />
+            <Route path="/r" element={<FromReddit />} />
+            <Route path="/from-reddit" element={<FromReddit />} />
           </Routes>
         </BrowserRouter>
       </AuthProvider>

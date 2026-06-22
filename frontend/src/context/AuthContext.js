@@ -23,8 +23,14 @@ export function AuthProvider({ children }) {
     return data.user;
   };
 
-  const signup = async (email, password, name) => {
-    const { data } = await api.post("/auth/signup", { email, password, name });
+  const signup = async (emailOrOpts, password, name) => {
+    // Support both legacy 3-arg call (email, password, name) and an options
+    // object (e.g. { email, password, name, signup_source })
+    const payload =
+      typeof emailOrOpts === "object"
+        ? emailOrOpts
+        : { email: emailOrOpts, password, name };
+    const { data } = await api.post("/auth/signup", payload);
     localStorage.setItem("cs_token", data.token);
     setUser(data.user);
     return data.user;
