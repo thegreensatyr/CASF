@@ -74,6 +74,7 @@ class SignupReq(BaseModel):
     password: str
     name: str
     signup_source: Optional[str] = None  # e.g. "reddit:near-miss", "google", "direct"
+    origin_url: Optional[str] = None
 
 
 class LoginReq(BaseModel):
@@ -103,6 +104,7 @@ class UserOut(BaseModel):
     free_video_scans_limit: int = FREE_VIDEO_SCANS_LIMIT
     email_digest_subscribed: bool = True
     live_trial_used: bool = False
+    email_verified: bool = True
 
 
 class LiveSessionStartReq(BaseModel):
@@ -352,6 +354,8 @@ async def require_admin(user=Depends(get_current_user)):
 
 
 def build_user_out(user: dict) -> UserOut:
+    # Admin users are implicitly verified (no email gate ever applies to them).
+    verified = bool(user.get("email_verified", False)) or is_admin_user(user)
     return UserOut(
         id=user["id"],
         email=user["email"],
@@ -362,6 +366,7 @@ def build_user_out(user: dict) -> UserOut:
         free_video_scans_used=int(user.get("free_video_scans_used", 0)),
         email_digest_subscribed=bool(user.get("email_digest_subscribed", True)),
         live_trial_used=bool(user.get("live_trial_used", False)),
+        email_verified=verified,
     )
 
 
@@ -481,6 +486,8 @@ async def signup(req: SignupReq, request: FastAPIRequest):
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
     user_id = str(uuid.uuid4())
+    # Admin email auto-verifies; everyone else must confirm via email link.
+    auto_verified = bool(ADMIN_EMAIL and req.email.lower() == ADMIN_EMAIL)
     user_doc = {
         "id": user_id,
         "email": req.email,
@@ -488,9 +495,17 @@ async def signup(req: SignupReq, request: FastAPIRequest):
         "password": hash_password(req.password),
         "created_at": datetime.now(timezone.utc).isoformat(),
         "signup_source": (req.signup_source or "direct")[:60],
+        "email_verified": auto_verified,
     }
     await db.users.insert_one(user_doc)
 
+    # Send verification email (best-effort, fire-and-forget). Skip for auto-verified admin.
+    if not auto_verified:
+        try:
+            origin = _resolve_origin(req.origin_url, request)
+            asyncio.create_task(_issue_and_send_verification(user_doc, origin))
+        except Exception:
+            logger.exception("Failed to schedule verification email")
     # Send welcome email (best-effort, fire-and-forget)
     if RESEND_API_KEY:
         try:
@@ -652,6 +667,80 @@ async def admin_run_onboarding(user=Depends(get_current_user)):
 
 
 
+def _verify_email_email(name: str, link: str) -> dict:
+    safe_name = name or "operator"
+    html = f"""<!doctype html>
+<html><body style="margin:0;padding:0;background:#0a0a0a;font-family:'JetBrains Mono',monospace;color:#fff;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background:#0a0a0a;padding:40px 16px;">
+    <tr><td align="center">
+      <table width="560" cellpadding="0" cellspacing="0" style="background:#0d0d0d;border:1px solid rgba(0,255,65,0.25);border-radius:8px;padding:32px;">
+        <tr><td>
+          <div style="font-size:11px;letter-spacing:.3em;color:#00ff41;text-transform:uppercase;margin-bottom:8px;">&gt; verify identity</div>
+          <h1 style="font-family:Unbounded,Arial,sans-serif;font-size:24px;color:#fff;margin:0 0 12px;">Confirm your email</h1>
+          <p style="font-size:13px;line-height:1.6;color:rgba(255,255,255,0.75);margin:0 0 24px;">Hey {safe_name}, click the button below to verify your email and unlock the forensic tools (trust checks, video scans, live mode). This link expires in 24 hours.</p>
+          <a href="{link}" style="display:inline-block;background:#00ff41;color:#000;text-decoration:none;font-weight:700;letter-spacing:.15em;font-size:12px;padding:14px 22px;border-radius:4px;">VERIFY EMAIL &gt;_</a>
+          <p style="font-size:11px;line-height:1.6;color:rgba(255,255,255,0.5);margin:24px 0 0;">Or copy &amp; paste this link into your browser:<br/><span style="color:#00ff41;word-break:break-all;">{link}</span></p>
+          <hr style="border:0;border-top:1px solid rgba(0,255,65,0.15);margin:24px 0;"/>
+          <p style="font-size:11px;color:rgba(255,255,255,0.4);margin:0;">Didn't sign up? You can safely ignore this email.</p>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>"""
+    text = f"Verify your Casino Spotter email\n\nHey {safe_name}, click the link below to confirm your email and unlock the forensic tools. Link expires in 24 hours.\n\n{link}\n\nDidn't sign up? Safely ignore this email."
+    return {"subject": "Verify your Casino Spotter email", "html": html, "text": text}
+
+
+def _resolve_origin(origin_url: Optional[str], request: FastAPIRequest) -> str:
+    origin = (origin_url or "").rstrip("/")
+    if not origin:
+        origin = os.environ.get("SITE_URL", "").rstrip("/")
+    if not origin:
+        host = request.headers.get("x-forwarded-host") or request.url.hostname
+        scheme = request.headers.get("x-forwarded-proto") or "https"
+        origin = f"{scheme}://{host}" if host else ""
+    return origin
+
+
+async def _issue_and_send_verification(user_doc: dict, origin: str) -> str:
+    """Create a fresh verification token (24h TTL), email it, return the link."""
+    # Invalidate older outstanding tokens for this user.
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.email_verifications.update_many(
+        {"user_id": user_doc["id"], "used_at": None},
+        {"$set": {"used_at": now_iso}},
+    )
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+    await db.email_verifications.insert_one({
+        "id": str(uuid.uuid4()),
+        "user_id": user_doc["id"],
+        "token": token,
+        "expires_at": expires_at.isoformat(),
+        "used_at": None,
+        "created_at": now_iso,
+    })
+    link = f"{origin.rstrip('/')}/verify-email?token={token}"
+    if RESEND_API_KEY:
+        content = _verify_email_email(user_doc.get("name", ""), link)
+        try:
+            await asyncio.to_thread(
+                resend.Emails.send,
+                {
+                    "from": SENDER_EMAIL,
+                    "to": [user_doc["email"]],
+                    "subject": content["subject"],
+                    "html": content["html"],
+                    "text": content["text"],
+                },
+            )
+        except Exception as e:
+            logger.exception(f"Failed to send verification email to {user_doc['email']}: {e}")
+    # Always log so admin can recover even when Resend DNS isn't verified yet.
+    logger.info(f"[EMAIL-VERIFY] user={user_doc['email']} link={link}")
+    return link
+
+
 def _password_reset_email(name: str, link: str) -> dict:
     safe_name = name or "operator"
     html = f"""<!doctype html>
@@ -707,13 +796,7 @@ async def forgot_password(req: ForgotPasswordReq, request: FastAPIRequest):
         "created_at": now_iso,
     })
 
-    origin = (req.origin_url or "").rstrip("/")
-    if not origin:
-        origin = os.environ.get("SITE_URL", "").rstrip("/")
-    if not origin:
-        host = request.headers.get("x-forwarded-host") or request.url.hostname
-        scheme = request.headers.get("x-forwarded-proto") or "https"
-        origin = f"{scheme}://{host}" if host else ""
+    origin = _resolve_origin(req.origin_url, request)
     reset_link = f"{origin}/reset-password?token={token}"
 
     email_sent = False
@@ -794,9 +877,96 @@ async def reset_password(req: ResetPasswordReq):
     )
 
 
+class VerifyEmailReq(BaseModel):
+    token: str
+
+
+class ResendVerifyReq(BaseModel):
+    origin_url: Optional[str] = None
+
+
+@api_router.post("/auth/verify-email", response_model=AuthResp)
+async def verify_email(req: VerifyEmailReq):
+    record = await db.email_verifications.find_one({"token": req.token}, {"_id": 0})
+    if not record:
+        raise HTTPException(status_code=400, detail="Invalid or expired verification link")
+
+    user = await db.users.find_one({"id": record["user_id"]}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=400, detail="Account no longer exists")
+
+    # Idempotent: if the user is already verified, treat repeat hits as success.
+    # Handles React 18 StrictMode double-invoke, email-app link prefetchers, and
+    # users opening the same link twice.
+    if user.get("email_verified"):
+        refreshed = await db.users.find_one({"id": user["id"]}, {"_id": 0, "password": 0})
+        return AuthResp(
+            token=create_token(user["id"]),
+            user=build_user_out(refreshed),
+        )
+
+    if record.get("used_at"):
+        raise HTTPException(status_code=400, detail="This verification link has already been used")
+    try:
+        expires_at = datetime.fromisoformat(record["expires_at"])
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid verification link")
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if datetime.now(timezone.utc) > expires_at:
+        raise HTTPException(status_code=400, detail="Verification link has expired. Request a new one.")
+
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.users.update_one({"id": user["id"]}, {"$set": {"email_verified": True, "verified_at": now_iso}})
+    await db.email_verifications.update_one(
+        {"id": record["id"]},
+        {"$set": {"used_at": now_iso}},
+    )
+    # Invalidate any other outstanding tokens for this user.
+    await db.email_verifications.update_many(
+        {"user_id": user["id"], "used_at": None, "id": {"$ne": record["id"]}},
+        {"$set": {"used_at": now_iso}},
+    )
+
+    refreshed = await db.users.find_one({"id": user["id"]}, {"_id": 0, "password": 0})
+    return AuthResp(
+        token=create_token(user["id"]),
+        user=build_user_out(refreshed),
+    )
+
+
+@api_router.post("/auth/resend-verification")
+async def resend_verification(req: ResendVerifyReq, request: FastAPIRequest, user=Depends(get_current_user)):
+    if user.get("email_verified") or is_admin_user(user):
+        return {"ok": True, "already_verified": True}
+    # Rate-limit: max 1 resend per 5 minutes per user.
+    five_min_ago = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+    recent = await db.email_verifications.count_documents({
+        "user_id": user["id"],
+        "created_at": {"$gte": five_min_ago},
+    })
+    if recent >= 1:
+        raise HTTPException(status_code=429, detail="Please wait a few minutes before requesting another verification email.")
+    origin = _resolve_origin(req.origin_url, request)
+    link = await _issue_and_send_verification(user, origin)
+    resp = {"ok": True, "message": "Verification email sent. Check your inbox."}
+    # Admin debug aid (same pattern as forgot-password)
+    if ADMIN_EMAIL and user.get("email", "").lower() == ADMIN_EMAIL:
+        resp["debug_link"] = link
+    return resp
+
+
 async def check_free_quota(user: dict, key: str, limit: int):
-    """Check quota WITHOUT incrementing. Raise 402 if exhausted."""
-    if user.get("is_premium") or is_admin_user(user):
+    """Check quota WITHOUT incrementing. Raise 402 if exhausted or 403 if email unverified."""
+    if is_admin_user(user):
+        return
+    # Require email verification before consuming any LLM quota (anti-bot cost control).
+    if not user.get("email_verified"):
+        raise HTTPException(
+            status_code=403,
+            detail="Please verify your email to use this feature. Check your inbox for the verification link.",
+        )
+    if user.get("is_premium"):
         return
     if int(user.get(key, 0)) >= limit:
         raise HTTPException(
@@ -994,6 +1164,12 @@ LIVE_TRIAL_MAX_SECONDS = 60             # free 60s trial (one per user)
 @api_router.post("/live/session/start", response_model=LiveSessionStartResp)
 async def live_session_start(req: LiveSessionStartReq, user=Depends(get_current_user)):
     is_unlimited = bool(user.get("is_premium")) or is_admin_user(user)
+    # Email-verification gate for non-admin users (LLM cost control).
+    if not is_admin_user(user) and not user.get("email_verified"):
+        raise HTTPException(
+            status_code=403,
+            detail="Please verify your email to start a live session. Check your inbox for the verification link.",
+        )
     if not is_unlimited and user.get("live_trial_used"):
         raise HTTPException(
             status_code=402,
@@ -2648,6 +2824,23 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.on_event("startup")
+async def startup_migrations():
+    """One-shot migrations safe to run on every boot."""
+    try:
+        # Grandfather existing users: anyone without an explicit email_verified flag
+        # gets marked verified. New signups (post this commit) will always have the
+        # field set to False (unless admin email).
+        result = await db.users.update_many(
+            {"email_verified": {"$exists": False}},
+            {"$set": {"email_verified": True, "grandfathered_at": datetime.now(timezone.utc).isoformat()}},
+        )
+        if result.modified_count:
+            logger.info(f"[migration] grandfathered {result.modified_count} legacy users as email_verified")
+    except Exception:
+        logger.exception("Startup migration failed")
 
 
 @app.on_event("shutdown")

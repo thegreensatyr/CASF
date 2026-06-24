@@ -30,6 +30,8 @@ import Privacy from "./pages/Privacy";
 import Terms from "./pages/Terms";
 import EditorialStandards from "./pages/EditorialStandards";
 import AdminDashboard from "./pages/AdminDashboard";
+import VerifyEmail from "./pages/VerifyEmail";
+import VerifyEmailBanner from "./components/VerifyEmailBanner";
 import Footer from "./components/Footer";
 
 function App() {
@@ -38,6 +40,7 @@ function App() {
       <AuthProvider>
         <BrowserRouter>
           <Navbar />
+          <VerifyEmailBanner />
           <Toaster
             theme="dark"
             position="top-right"
@@ -57,6 +60,7 @@ function App() {
             <Route path="/signup" element={<Signup />} />
             <Route path="/forgot-password" element={<ForgotPassword />} />
             <Route path="/reset-password" element={<ResetPassword />} />
+            <Route path="/verify-email" element={<VerifyEmail />} />
             <Route path="/techniques" element={<Techniques />} />
             <Route path="/techniques/:slug" element={<TechniqueDetail />} />
             <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />

@@ -28,8 +28,10 @@ export function AuthProvider({ children }) {
     // object (e.g. { email, password, name, signup_source })
     const payload =
       typeof emailOrOpts === "object"
-        ? emailOrOpts
+        ? { ...emailOrOpts }
         : { email: emailOrOpts, password, name };
+    // Pass origin so backend builds the right verification link.
+    if (!payload.origin_url) payload.origin_url = window.location.origin;
     const { data } = await api.post("/auth/signup", payload);
     localStorage.setItem("cs_token", data.token);
     setUser(data.user);
@@ -41,8 +43,19 @@ export function AuthProvider({ children }) {
     setUser(null);
   };
 
+  const refreshUser = async () => {
+    const { data } = await api.get("/auth/me");
+    setUser(data);
+    return data;
+  };
+
+  const setSession = (token, userData) => {
+    localStorage.setItem("cs_token", token);
+    setUser(userData);
+  };
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, signup, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, signup, logout, refreshUser, setSession }}>
       {children}
     </AuthContext.Provider>
   );

@@ -1,0 +1,48 @@
+{
+  "summary": "Full backend + frontend validation of the new email-verification gating feature (Casino Spotter, Jan 2026). 15/15 backend pytest cases pass in /app/backend/tests/test_email_verification.py covering: signup creates email_verified=false, admin auto-verified, legacy users grandfathered, /api/legitimacy/research + /api/live/session/start return 403 for unverified, /api/auth/verify-email valid+idempotent+invalid, /api/auth/resend-verification 429 + already-verified shortcut + auth-required, [EMAIL-VERIFY] log fallback, plus regression on admin/legacy login. Frontend Playwright E2E: signup of fresh TEST_ user landed on /dashboard with VerifyEmailBanner shown (correct copy + 'resend email >_' button), clicking resend produced the expected 429 toast 'Please wait a few minutes before requesting another verification email.', then visiting /verify-email?token=<TOKEN> from backend logs auto-redirected to /dashboard with 'Email verified. Forensic tools unlocked.' success toast, banner disappeared after verification, and a 2nd visit to the same verify URL still succeeded (idempotent) and re-redirected to /dashboard. No critical or minor issues found.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/auth/resend-verification", "issue": "Rate-limit window is anchored on email_verifications.created_at which is also written by signup, so the very first resend immediately after signup is ALWAYS 429 until 5 min pass. This is documented expected behaviour (per agent-to-agent context), but the user-facing toast could be friendlier (e.g. 'A verification email was just sent. Check your inbox before requesting another.')."},
+      {"endpoint": "POST /api/auth/verify-email", "issue": "Idempotent re-hit returns 200 with a fresh JWT, but the response does NOT echo a flag like {already_verified: true}, so the frontend can't distinguish first-success from re-success. Not a bug — UX is identical — just worth noting."},
+      {"endpoint": "POST /api/auth/signup", "issue": "Pre-existing IP-based 5/hour signup limit is shared across all test runs. Backend tests have to wipe db.signup_attempts before each test. Not a feature bug; test harness handles it."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "VerifyEmailBanner (/dashboard, unverified)", "issues": ["Banner background uses var(--neon-glow) with white/85 text — contrast is acceptable but the resend underline text and warning text are similar weight; minor visual hierarchy nit."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_email_verification.py",
+    "/app/test_reports/pytest/email_verification_results.xml"
+  ],
+  "action_items": [
+    "INFO: Consider adding {already_verified: true} to /auth/verify-email response when the idempotent branch fires, so the frontend can show a softer toast ('Already verified — welcome back').",
+    "INFO: Friendlier copy for the immediate-post-signup 429 from /auth/resend-verification (current text is accurate but slightly cryptic given that the user literally just signed up 2 seconds ago).",
+    "OPTIONAL: Surface a tiny inline countdown on the banner ('resend available in 4:32') instead of relying on a toast after the click."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now ~2849 lines — well past the 700-line threshold. Splitting into routers (auth.py, live.py, legitimacy.py, stripe.py, seo.py, affiliates.py, scam_wall.py) is overdue.",
+    "Email-verification gating is correctly placed at three call sites: check_free_quota (covers /legitimacy/research, /analyze and any other quota-bounded endpoint), live_session_start. Admin and is_admin_user() correctly bypass.",
+    "Grandfather migration in startup_migrations() uses {email_verified: {$exists: false}} which is idempotent and safe on every boot — good.",
+    "_issue_and_send_verification correctly invalidates older outstanding tokens before issuing a new one (no leaked tokens).",
+    "verify-email handler: idempotent branch checks user.email_verified BEFORE checking record.used_at, which is the right order — handles the edge case where the record was already marked used by a prior call.",
+    "_read_verify_link fallback log line ('[EMAIL-VERIFY] user=... link=...') is correctly emitted to backend.out.log even when Resend send raises — confirmed via grep during tests.",
+    "VerifyEmail.jsx uses ranRef guard against React 18 StrictMode double-invoke — good belt-and-suspenders even though the backend is idempotent.",
+    "VerifyEmailBanner.jsx hides on the 5 documented routes (/login, /signup, /verify-email, /forgot-password, /reset-password) and on !user — matches spec exactly.",
+    "Minor: AuthContext setSession is called inside VerifyEmail.jsx then a 1.6s setTimeout redirects to /dashboard — fine, but consider making the redirect wait for the new user object to actually propagate (await one tick) to avoid a flash of the banner on /dashboard before the new state lands. Did not observe the flash in testing, but it's a theoretical race."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_email_verification.py (new — 15 pytest cases, all passing)"
+  ],
+  "success_rate": {"backend": "15/15 = 100%", "frontend": "5/5 E2E checks = 100% (signup→banner→resend-429→verify-link→idempotent-revisit)"},
+  "test_credentials": "Admin: casforensics@gmail.com / CasForensics2026! (unchanged, still works). Legacy: test@cs.io / pass123 (unchanged, grandfathered as email_verified=true). Several ephemeral TEST_verify_* and TEST_verfe_* users were created and left in DB (all email_verified=false except the one frontend user TEST_verfe_5b9548@cs.io which is now verified).",
+  "seed_data_creation": "Tests create ephemeral TEST_verify_<uuid>@cs.io users for each test (one per test, ~7-8 total). One frontend user TEST_verfe_5b9548@cs.io created during Playwright E2E and verified. Backend test fixture wipes db.signup_attempts before each test to bypass the 5/hour IP signup limit — does NOT touch users or email_verifications collections.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Run: pytest /app/backend/tests/test_email_verification.py -v (15 tests, ~24s). The autouse fixture wipes db.signup_attempts before every test to defeat the IP rate limit — if you add new signup tests in other files, copy that helper. Frontend Playwright E2E flow that worked: (1) goto /signup, fill HANDLE/email/password, click 'CREATE ACCOUNT', (2) lands on /dashboard with [data-testid='verify-email-banner'] visible, (3) click [data-testid='resend-verification-btn'] → expect 429 toast, (4) tail /var/log/supervisor/backend.err.log for '[EMAIL-VERIFY] user=<email> link=<url>', (5) goto link → auto-redirects to /dashboard with success toast, banner gone. Idempotency confirmed: re-visiting the same /verify-email?token=... URL still redirects to /dashboard. Admin (casforensics@gmail.com) bypasses all verification gates via is_admin_user(); legacy users (test@cs.io) were grandfathered by startup migration and also bypass.",
+  "rca of the issue": "No bugs found. Email-verification gating works end-to-end across all 12 listed requirements. The only nuance worth flagging: the rate-limit for /auth/resend-verification counts the auto-issued signup token, so the first manual resend within 5 min returns 429. That's documented expected behaviour per the main agent's note and was validated."
+}
