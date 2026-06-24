@@ -1919,6 +1919,9 @@ class VoteReq(BaseModel):
 async def _enrich_scam(doc: dict, user_id: Optional[str]) -> dict:
     upvotes = await db.scam_votes.count_documents({"scam_id": doc["id"], "vote": "up"})
     downvotes = await db.scam_votes.count_documents({"scam_id": doc["id"], "vote": "down"})
+    # Add curated baseline for seeded reports (curated from public OP threads).
+    upvotes += int(doc.get("seed_upvotes", 0) or 0)
+    downvotes += int(doc.get("seed_downvotes", 0) or 0)
     my_vote = None
     if user_id:
         v = await db.scam_votes.find_one({"scam_id": doc["id"], "user_id": user_id}, {"_id": 0})
@@ -2008,6 +2011,27 @@ async def vote_scam(post_id: str, req: VoteReq, user=Depends(get_current_user)):
         )
     enriched = await _enrich_scam(post, user["id"])
     return ScamPostOut(**enriched)
+
+
+@api_router.post("/admin/seed-scam-wall")
+async def seed_scam_wall(user=Depends(require_admin)):
+    """Idempotent seed of curated, attribution-linked Scam Wall reports."""
+    from scam_wall_seed import build_seed_docs
+    docs = build_seed_docs()
+    inserted = 0
+    updated = 0
+    for d in docs:
+        existing = await db.scam_posts.find_one({"id": d["id"]}, {"_id": 0, "id": 1})
+        if existing:
+            await db.scam_posts.update_one(
+                {"id": d["id"]},
+                {"$set": d},
+            )
+            updated += 1
+        else:
+            await db.scam_posts.insert_one(d)
+            inserted += 1
+    return {"inserted": inserted, "updated": updated, "total": len(docs)}
 
 
 # ============= Affiliate Casinos (Monetization) =============

@@ -89,10 +89,23 @@ export function ScamWall() {
                 {p.title}
               </Link>
               <p className="text-xs text-white/70 font-mono mt-2 line-clamp-2">{p.story}</p>
-              <div className="flex items-center gap-4 mt-3 text-[10px] uppercase tracking-widest text-white/50">
+              <div className="flex items-center gap-4 mt-3 text-[10px] uppercase tracking-widest text-white/50 flex-wrap">
                 <span>{p.upvotes} up</span>
                 <span>{p.downvotes} down</span>
                 <Link to={`/scams/${p.id}`} className="text-[var(--neon)]">Read &gt;_</Link>
+                {p.evidence_url && (
+                  <a
+                    href={p.evidence_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
+                    className="inline-flex items-center gap-1 text-white/60 hover:text-[var(--neon)] transition normal-case tracking-normal"
+                    data-testid={`source-${p.id}`}
+                    title="View original public source"
+                  >
+                    <ExternalLink className="w-3 h-3" /> source: {sourceLabel(p.evidence_url)}
+                  </a>
+                )}
               </div>
             </div>
           </div>
@@ -241,13 +254,33 @@ export function ScamDetail() {
       <p className="text-sm font-mono text-white/85 whitespace-pre-line leading-relaxed">{post.story}</p>
 
       {post.evidence_url && (
-        <a href={post.evidence_url} target="_blank" rel="noopener noreferrer"
-          className="inline-flex items-center gap-2 mt-8 btn-ghost text-xs" data-testid="evidence-link">
-          <ExternalLink className="w-3 h-3" /> View evidence
-        </a>
+        <div className="mt-8 panel p-4 border border-white/10">
+          <p className="text-[10px] uppercase tracking-[0.3em] text-white/40 mb-2">// original public source</p>
+          <a
+            href={post.evidence_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 text-[var(--neon)] hover:text-white transition text-sm font-mono break-all"
+            data-testid="evidence-link"
+          >
+            <ExternalLink className="w-4 h-4 shrink-0" /> {post.evidence_url}
+          </a>
+          <p className="text-[10px] text-white/40 mt-2 font-mono">
+            credit: original poster on {sourceLabel(post.evidence_url)} — click through to give them the upvote
+          </p>
+        </div>
       )}
     </div>
   );
+}
+
+function sourceLabel(url) {
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, "");
+    return host;
+  } catch {
+    return "external source";
+  }
 }
 
 function Field({ label, value, onChange, testid, placeholder }) {
