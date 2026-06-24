@@ -7,6 +7,8 @@ import { toast } from "sonner";
 export function Login() {
   const { login } = useAuth();
   const nav = useNavigate();
+  const [params] = useSearchParams();
+  const next = params.get("next");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -17,7 +19,7 @@ export function Login() {
     try {
       await login(email, password);
       toast.success("Welcome back, operator.");
-      nav("/dashboard");
+      nav(next || "/dashboard");
     } catch (err) {
       toast.error(err?.response?.data?.detail || "Login failed");
     } finally { setBusy(false); }
@@ -38,7 +40,7 @@ export function Login() {
         </Link>
       </div>
       <p className="text-xs mt-4 text-white/60 font-mono">
-        New here? <Link to="/signup" className="text-[var(--neon)]" data-testid="goto-signup">Create account</Link>
+        New here? <Link to={next ? `/signup?next=${encodeURIComponent(next)}` : "/signup"} className="text-[var(--neon)]" data-testid="goto-signup">Create account</Link>
       </p>
     </AuthShell>
   );
@@ -47,6 +49,8 @@ export function Login() {
 export function Signup() {
   const { signup } = useAuth();
   const nav = useNavigate();
+  const [params] = useSearchParams();
+  const next = params.get("next");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -59,7 +63,7 @@ export function Signup() {
     try {
       await signup(email, password, name);
       toast.success("Account created. Forensic tools unlocked.");
-      nav("/dashboard");
+      nav(next || "/dashboard");
     } catch (err) {
       toast.error(err?.response?.data?.detail || "Signup failed");
     } finally { setBusy(false); }
@@ -76,7 +80,7 @@ export function Signup() {
         </button>
       </form>
       <p className="text-xs mt-6 text-white/60 font-mono">
-        Already have an account? <Link to="/login" className="text-[var(--neon)]" data-testid="goto-login">Login</Link>
+        Already have an account? <Link to={next ? `/login?next=${encodeURIComponent(next)}` : "/login"} className="text-[var(--neon)]" data-testid="goto-login">Login</Link>
       </p>
     </AuthShell>
   );

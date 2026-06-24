@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../lib/api";
 import { useAuth } from "../context/AuthContext";
 import { toast } from "sonner";
@@ -134,7 +134,13 @@ function SortBtn({ active, onClick, icon, label, testid }) {
 export function NewScam() {
   const nav = useNavigate();
   const { user } = useAuth();
-  const [form, setForm] = useState({ casino_name: "", title: "", story: "", evidence_url: "" });
+  const [params] = useSearchParams();
+  const [form, setForm] = useState({
+    casino_name: params.get("casino") || "",
+    title: "",
+    story: "",
+    evidence_url: "",
+  });
   const [busy, setBusy] = useState(false);
 
   if (!user) {
@@ -270,6 +276,23 @@ export function ScamDetail() {
           </p>
         </div>
       )}
+
+      <div className="mt-6 panel p-6 border border-[var(--neon)]/30 bg-[var(--neon-glow)]/30">
+        <p className="text-[10px] uppercase tracking-[0.3em] text-[var(--neon)] mb-2">// add your version</p>
+        <h2 className="font-heading text-xl md:text-2xl tracking-tight mb-2">
+          Did the same thing happen to you at {post.casino_name}?
+        </h2>
+        <p className="text-sm text-white/70 font-mono mb-4">
+          &gt; Share your story. Same casino, same pattern — your report stacks the evidence.
+        </p>
+        <Link
+          to={`/scams/new?casino=${encodeURIComponent(post.casino_name)}`}
+          className="btn-neon inline-flex items-center gap-2"
+          data-testid="add-your-version-cta"
+        >
+          <Plus className="w-4 h-4" /> SHARE YOUR {post.casino_name.toUpperCase()} STORY &gt;_
+        </Link>
+      </div>
     </div>
   );
 }
