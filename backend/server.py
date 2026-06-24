@@ -457,7 +457,26 @@ async def root():
 
 
 @api_router.post("/auth/signup", response_model=AuthResp)
-async def signup(req: SignupReq):
+async def signup(req: SignupReq, request: FastAPIRequest):
+    # IP-based rate limit: max 5 signups per hour per IP (anti-bot before advertising launch)
+    ip = request.headers.get("x-forwarded-for", "").split(",")[0].strip() \
+        or (request.client.host if request.client else "unknown")
+    one_hour_ago = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+    recent_signups = await db.signup_attempts.count_documents({
+        "ip": ip,
+        "created_at": {"$gte": one_hour_ago},
+    })
+    if recent_signups >= 5:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many signups from this network in the last hour. Try again later.",
+        )
+    await db.signup_attempts.insert_one({
+        "ip": ip,
+        "email": req.email,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    })
+
     existing = await db.users.find_one({"email": req.email})
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
@@ -471,6 +490,14 @@ async def signup(req: SignupReq):
         "signup_source": (req.signup_source or "direct")[:60],
     }
     await db.users.insert_one(user_doc)
+
+    # Send welcome email (best-effort, fire-and-forget)
+    if RESEND_API_KEY:
+        try:
+            asyncio.create_task(_send_onboarding_email(user_doc, "welcome"))
+        except Exception:
+            logger.exception("Failed to schedule welcome email")
+
     return AuthResp(
         token=create_token(user_id),
         user=build_user_out({**user_doc, "id": user_id}),
@@ -491,6 +518,138 @@ async def login(req: LoginReq):
 @api_router.get("/auth/me", response_model=UserOut)
 async def me(user=Depends(get_current_user)):
     return build_user_out(user)
+
+ONBOARDING_EMAILS = {
+    "welcome": {
+        "subject": "Welcome to Casino Spotter — your forensic tools are ready",
+        "html_template": """<h1 style="font-family:Arial;color:#00ff41;letter-spacing:.05em;">WELCOME, {name}</h1>
+<p>Your account is live. You've got three free forensic tools:</p>
+<ul style="line-height:1.7;">
+  <li><a href="{site}/analyze" style="color:#00ff41;">1 free video scan</a> — Gemini 3 Flash analyses frame-by-frame</li>
+  <li><a href="{site}/legitimacy" style="color:#00ff41;">1 free casino trust report</a> — Claude Sonnet 4.5 forensic audit</li>
+  <li><a href="{site}/live" style="color:#00ff41;">60-second live capture trial</a> — real-time pattern detection</li>
+</ul>
+<p>If you only do one thing this week: scan one game you've been suspicious of. The first time you see "near-miss programming" flagged in a clip you uploaded yourself, you'll understand why we built this.</p>
+<p style="margin-top:24px;"><a href="{site}/dashboard" style="display:inline-block;background:#00ff41;color:#000;padding:14px 22px;font-weight:700;text-decoration:none;">START SCANNING &gt;_</a></p>
+<p style="color:#888;font-size:11px;margin-top:32px;">Gambling problem? Call 1-800-GAMBLER or visit BeGambleAware.org. Unsubscribe anytime in your <a href="{site}/dashboard" style="color:#888;">dashboard</a>.</p>""",
+    },
+    "day2": {
+        "subject": "5 techniques the casinos hope you never learn about",
+        "html_template": """<h1 style="font-family:Arial;color:#00ff41;letter-spacing:.05em;">{name}, the rabbit hole goes deep</h1>
+<p>You signed up a couple of days ago. Here are 5 manipulation techniques every player should know:</p>
+<ol style="line-height:1.8;">
+  <li><a href="{site}/techniques/near-miss" style="color:#00ff41;">Near-miss programming</a></li>
+  <li><a href="{site}/techniques/slow-reveal" style="color:#00ff41;">Losses disguised as wins</a></li>
+  <li><a href="{site}/techniques/bonus-traps" style="color:#00ff41;">Wagering requirement math</a></li>
+  <li><a href="{site}/techniques/delayed-withdrawal" style="color:#00ff41;">The KYC stall</a></li>
+  <li><a href="{site}/techniques/false-rtp" style="color:#00ff41;">Hidden RTP variants</a></li>
+</ol>
+<p>The 4 articles above are the most-read pieces on the site. If you haven't yet, give the near-miss one a few minutes.</p>
+<p style="margin-top:24px;"><a href="{site}/techniques" style="display:inline-block;background:#00ff41;color:#000;padding:14px 22px;font-weight:700;text-decoration:none;">SEE ALL TECHNIQUES &gt;_</a></p>
+<p style="color:#888;font-size:11px;margin-top:32px;">Want fewer emails? <a href="{site}/dashboard" style="color:#888;">Unsubscribe in dashboard</a>.</p>""",
+    },
+    "day5": {
+        "subject": "Unlock unlimited forensic tools",
+        "html_template": """<h1 style="font-family:Arial;color:#00ff41;letter-spacing:.05em;">{name} — one more thing</h1>
+<p>If you've been scanning, you've probably hit (or are close to hitting) your free-tier quota. Premium unlocks the rest:</p>
+<ul style="line-height:1.8;">
+  <li>Unlimited video forensic scans</li>
+  <li>Unlimited casino trust reports</li>
+  <li>Unlimited 3-minute live capture sessions</li>
+  <li>Weekly forensic digest by email</li>
+</ul>
+<p><strong>$9.99/month. Cancel anytime.</strong></p>
+<p>If you've already upgraded — thank you, ignore this.</p>
+<p style="margin-top:24px;"><a href="{site}/pricing" style="display:inline-block;background:#00ff41;color:#000;padding:14px 22px;font-weight:700;text-decoration:none;">GO PREMIUM &gt;_</a></p>
+<p style="color:#888;font-size:11px;margin-top:32px;">This is the last automated email. We don't spam.</p>""",
+    },
+}
+
+
+async def _send_onboarding_email(user_doc: dict, kind: str):
+    """Send one of the onboarding emails. Records in `email_log` so we never double-send."""
+    if not RESEND_API_KEY:
+        return
+    if kind not in ONBOARDING_EMAILS:
+        return
+    already = await db.email_log.find_one({"user_id": user_doc["id"], "kind": kind})
+    if already:
+        return
+    template = ONBOARDING_EMAILS[kind]
+    site = os.environ.get("SITE_URL", "").rstrip("/") or "https://casforensics.org"
+    name = (user_doc.get("name") or "operator").split("@")[0][:24]
+    html = template["html_template"].format(name=name, site=site)
+    try:
+        await asyncio.to_thread(resend.Emails.send, {
+            "from": SENDER_EMAIL,
+            "to": [user_doc["email"]],
+            "subject": template["subject"],
+            "html": html,
+        })
+        await db.email_log.insert_one({
+            "user_id": user_doc["id"],
+            "email": user_doc["email"],
+            "kind": kind,
+            "sent_at": datetime.now(timezone.utc).isoformat(),
+        })
+        logger.info(f"[ONBOARDING] sent {kind} to {user_doc['email']}")
+    except Exception as e:
+        logger.exception(f"Failed to send {kind} email to {user_doc['email']}: {e}")
+
+
+@api_router.post("/admin/onboarding/run")
+async def admin_run_onboarding(user=Depends(get_current_user)):
+    """Manually trigger day-2 / day-5 onboarding emails for eligible users. Safe to call daily.
+    Idempotent thanks to the email_log dedupe in _send_onboarding_email."""
+    if not is_admin_user(user):
+        raise HTTPException(403, "Admin only")
+
+    now = datetime.now(timezone.utc)
+    two_days_ago = (now - timedelta(days=2)).isoformat()
+    three_days_ago = (now - timedelta(days=3)).isoformat()
+    five_days_ago = (now - timedelta(days=5)).isoformat()
+    six_days_ago = (now - timedelta(days=6)).isoformat()
+
+    # Day-2 cohort: signed up between 2-3 days ago, day2 email not yet sent
+    day2_candidates = await db.users.find(
+        {"created_at": {"$gte": three_days_ago, "$lte": two_days_ago},
+         "email_digest_subscribed": {"$ne": False}},
+        {"_id": 0},
+    ).to_list(500)
+
+    # Day-5 cohort: signed up between 5-6 days ago
+    day5_candidates = await db.users.find(
+        {"created_at": {"$gte": six_days_ago, "$lte": five_days_ago},
+         "email_digest_subscribed": {"$ne": False}},
+        {"_id": 0},
+    ).to_list(500)
+
+    sent = {"day2": 0, "day5": 0, "skipped": 0}
+    for u in day2_candidates:
+        already = await db.email_log.find_one({"user_id": u["id"], "kind": "day2"})
+        if already:
+            sent["skipped"] += 1
+            continue
+        await _send_onboarding_email(u, "day2")
+        sent["day2"] += 1
+    for u in day5_candidates:
+        already = await db.email_log.find_one({"user_id": u["id"], "kind": "day5"})
+        if already:
+            sent["skipped"] += 1
+            continue
+        await _send_onboarding_email(u, "day5")
+        sent["day5"] += 1
+
+    return {
+        "ok": True,
+        "sent": sent,
+        "candidates": {
+            "day2": len(day2_candidates),
+            "day5": len(day5_candidates),
+        },
+    }
+
+
 
 
 def _password_reset_email(name: str, link: str) -> dict:
@@ -1318,6 +1477,159 @@ async def admin_signup_sources(user=Depends(get_current_user)):
     ]
 
 
+# Estimated cost (USD) per LLM call type. Used by the admin dashboard for burn-rate alerts.
+LLM_COST_ESTIMATES = {
+    "video_analysis": 0.18,       # Gemini 3 Flash with ~30-90s video upload
+    "legitimacy_report": 0.06,    # Claude Sonnet 4.5 ~2k tokens
+    "live_frame": 0.012,          # Gemini 3 Flash single image
+    "live_summary": 0.02,         # Gemini 3 Flash text-only summary
+    "video_compare": 0.20,        # Gemini compare endpoint
+}
+
+
+@api_router.get("/admin/dashboard")
+async def admin_dashboard(user=Depends(get_current_user)):
+    """One-call snapshot of everything an operator needs: signups, conversions,
+    LLM burn estimates, MRR, pending moderation queues. Read-only."""
+    if not is_admin_user(user):
+        raise HTTPException(403, "Admin only")
+
+    now = datetime.now(timezone.utc)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+    seven_days_ago = (now - timedelta(days=7)).isoformat()
+    thirty_days_ago = (now - timedelta(days=30)).isoformat()
+
+    # --- User counts ---
+    users_total = await db.users.count_documents({})
+    users_premium = await db.users.count_documents({"is_premium": True})
+    users_today = await db.users.count_documents({"created_at": {"$gte": today_start}})
+    users_7d = await db.users.count_documents({"created_at": {"$gte": seven_days_ago}})
+
+    # --- MRR (Premium subscribers × $9.99) ---
+    mrr = round(users_premium * 9.99, 2)
+    arr = round(mrr * 12, 2)
+
+    # --- LLM usage today and 7d ---
+    analyses_today = await db.analyses.count_documents({"created_at": {"$gte": today_start}})
+    analyses_7d = await db.analyses.count_documents({"created_at": {"$gte": seven_days_ago}})
+    legitimacy_today = await db.legitimacy_reports.count_documents(
+        {"created_at": {"$gte": today_start}, "served_from_cache": {"$ne": True}}
+    )
+    legitimacy_7d = await db.legitimacy_reports.count_documents(
+        {"created_at": {"$gte": seven_days_ago}, "served_from_cache": {"$ne": True}}
+    )
+    legitimacy_cache_hits_7d = await db.legitimacy_reports.count_documents(
+        {"created_at": {"$gte": seven_days_ago}, "served_from_cache": True}
+    )
+
+    # Live sessions — count frames + summary calls
+    live_today_pipeline = [
+        {"$match": {"started_at": {"$gte": today_start}}},
+        {"$project": {"frame_count": {"$size": {"$ifNull": ["$frames", []]}}, "ended_at": 1}},
+        {"$group": {
+            "_id": None,
+            "frame_calls": {"$sum": "$frame_count"},
+            "summary_calls": {"$sum": {"$cond": [{"$ne": ["$ended_at", None]}, 1, 0]}},
+        }},
+    ]
+    live_today_rows = [r async for r in db.live_sessions.aggregate(live_today_pipeline)]
+    live_today = live_today_rows[0] if live_today_rows else {"frame_calls": 0, "summary_calls": 0}
+
+    live_7d_pipeline = [
+        {"$match": {"started_at": {"$gte": seven_days_ago}}},
+        {"$project": {"frame_count": {"$size": {"$ifNull": ["$frames", []]}}, "ended_at": 1}},
+        {"$group": {
+            "_id": None,
+            "frame_calls": {"$sum": "$frame_count"},
+            "summary_calls": {"$sum": {"$cond": [{"$ne": ["$ended_at", None]}, 1, 0]}},
+        }},
+    ]
+    live_7d_rows = [r async for r in db.live_sessions.aggregate(live_7d_pipeline)]
+    live_7d = live_7d_rows[0] if live_7d_rows else {"frame_calls": 0, "summary_calls": 0}
+
+    cost_today = round(
+        analyses_today * LLM_COST_ESTIMATES["video_analysis"]
+        + legitimacy_today * LLM_COST_ESTIMATES["legitimacy_report"]
+        + live_today["frame_calls"] * LLM_COST_ESTIMATES["live_frame"]
+        + live_today["summary_calls"] * LLM_COST_ESTIMATES["live_summary"],
+        2,
+    )
+    cost_7d = round(
+        analyses_7d * LLM_COST_ESTIMATES["video_analysis"]
+        + legitimacy_7d * LLM_COST_ESTIMATES["legitimacy_report"]
+        + live_7d["frame_calls"] * LLM_COST_ESTIMATES["live_frame"]
+        + live_7d["summary_calls"] * LLM_COST_ESTIMATES["live_summary"],
+        2,
+    )
+    cache_savings_7d = round(legitimacy_cache_hits_7d * LLM_COST_ESTIMATES["legitimacy_report"], 2)
+
+    # --- Moderation queues ---
+    pending_disputes = await db.disputes.count_documents({"status": "pending"})
+    pending_verifieds = await db.verified_applications.count_documents({"status": "pending"})
+
+    # --- Recent activity ---
+    recent_scams = await db.scam_posts.find({}, {"_id": 0}).sort("created_at", -1).to_list(5)
+    recent_signups = await db.users.find(
+        {}, {"_id": 0, "id": 1, "email": 1, "created_at": 1, "signup_source": 1, "is_premium": 1}
+    ).sort("created_at", -1).to_list(8)
+
+    # --- Top signup sources (last 30d) ---
+    source_pipeline = [
+        {"$match": {"created_at": {"$gte": thirty_days_ago}}},
+        {"$group": {
+            "_id": {"$ifNull": ["$signup_source", "direct"]},
+            "count": {"$sum": 1},
+            "premium": {"$sum": {"$cond": [{"$eq": ["$is_premium", True]}, 1, 0]}},
+        }},
+        {"$sort": {"count": -1}},
+        {"$limit": 8},
+    ]
+    sources = [r async for r in db.users.aggregate(source_pipeline)]
+    sources_out = [
+        {"source": s["_id"], "signups_30d": s["count"], "premium_30d": s.get("premium", 0)}
+        for s in sources
+    ]
+
+    return {
+        "users": {
+            "total": users_total,
+            "premium": users_premium,
+            "today": users_today,
+            "seven_days": users_7d,
+        },
+        "revenue": {
+            "mrr_usd": mrr,
+            "arr_usd": arr,
+            "premium_count": users_premium,
+        },
+        "llm_costs": {
+            "estimated_today_usd": cost_today,
+            "estimated_7d_usd": cost_7d,
+            "cache_savings_7d_usd": cache_savings_7d,
+            "breakdown_today": {
+                "video_analysis_calls": analyses_today,
+                "legitimacy_report_calls": legitimacy_today,
+                "live_frame_calls": live_today["frame_calls"],
+                "live_summary_calls": live_today["summary_calls"],
+            },
+            "breakdown_7d": {
+                "video_analysis_calls": analyses_7d,
+                "legitimacy_report_calls": legitimacy_7d,
+                "legitimacy_cache_hits": legitimacy_cache_hits_7d,
+                "live_frame_calls": live_7d["frame_calls"],
+                "live_summary_calls": live_7d["summary_calls"],
+            },
+        },
+        "moderation": {
+            "pending_disputes": pending_disputes,
+            "pending_verified_apps": pending_verifieds,
+        },
+        "recent_signups": recent_signups,
+        "recent_scams": recent_scams,
+        "top_sources_30d": sources_out,
+    }
+
+
 @api_router.post("/admin/disputes/{dispute_id}/moderate", response_model=DisputeOut)
 async def admin_moderate_dispute(dispute_id: str, req: DisputeModerateReq, user=Depends(get_current_user)):
     if not is_admin_user(user):
@@ -1356,6 +1668,38 @@ KNOWN_CASINOS = {
 async def research_casino(req: LegitimacyReq, user=Depends(get_current_user)):
     await check_free_quota(user, "free_trust_checks_used", FREE_TRUST_CHECKS_LIMIT)
     name_lower = req.casino_name.lower().strip()
+
+    # ============ LLM RESULT CACHE (cost control before advertising) ============
+    # Reuse a recent identical-query report for 24h. Saves $0.05-$0.10 per cache hit.
+    # Cached responses are also surfaced to the requester via their own report record.
+    cache_cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    cached = await db.legitimacy_reports.find_one(
+        {
+            "casino_name_lower": name_lower,
+            "created_at": {"$gte": cache_cutoff},
+            "is_cache_seed": True,  # only canonical, ad-safe entries
+        },
+        {"_id": 0},
+        sort=[("created_at", -1)],
+    )
+    if cached:
+        # Clone the cached payload but reassign ownership + bump quota for the new user
+        new_id = str(uuid.uuid4())
+        new_slug = make_slug(req.casino_name) + "-" + new_id[:6]
+        clone = {
+            **cached,
+            "id": new_id,
+            "slug": new_slug,
+            "user_id": user["id"],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "public": False,
+            "is_cache_seed": False,
+            "served_from_cache": True,
+        }
+        await db.legitimacy_reports.insert_one(clone)
+        await bump_free_quota(user, "free_trust_checks_used")
+        return LegitimacyOut(**{k: v for k, v in clone.items() if k not in ("user_id", "is_cache_seed", "casino_name_lower")})
+
     db_hint = "no direct match in our curated database"
     for s in KNOWN_CASINOS["scams"]:
         if s in name_lower or name_lower in s:
@@ -1440,6 +1784,7 @@ async def research_casino(req: LegitimacyReq, user=Depends(get_current_user)):
         "id": record_id,
         "user_id": user["id"],
         "casino_name": req.casino_name,
+        "casino_name_lower": name_lower,
         "casino_url": req.casino_url,
         "trust_score": max(0, min(100, trust_score)),
         "verdict": verdict,
@@ -1448,10 +1793,13 @@ async def research_casino(req: LegitimacyReq, user=Depends(get_current_user)):
         "green_flags": green_flags,
         "slug": make_slug(req.casino_name),
         "created_at": datetime.now(timezone.utc).isoformat(),
+        "is_cache_seed": True,           # eligible for 24h cache reuse
+        "served_from_cache": False,
     }
     await db.legitimacy_reports.insert_one(doc)
     await bump_free_quota(user, "free_trust_checks_used")
-    return LegitimacyOut(**doc)
+    public_doc = {k: v for k, v in doc.items() if k not in ("user_id", "is_cache_seed", "casino_name_lower")}
+    return LegitimacyOut(**public_doc)
 
 
 @api_router.get("/legitimacy/history", response_model=List[LegitimacyOut])

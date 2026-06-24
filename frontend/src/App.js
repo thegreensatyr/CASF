@@ -26,6 +26,11 @@ import PublicLiveReport from "./pages/PublicLiveReport";
 import Dispute from "./pages/Dispute";
 import AdminDisputes from "./pages/AdminDisputes";
 import FromReddit from "./pages/FromReddit";
+import Privacy from "./pages/Privacy";
+import Terms from "./pages/Terms";
+import EditorialStandards from "./pages/EditorialStandards";
+import AdminDashboard from "./pages/AdminDashboard";
+import Footer from "./components/Footer";
 
 function App() {
   return (
@@ -79,7 +84,12 @@ function App() {
             <Route path="/admin/disputes" element={<ProtectedRoute><AdminDisputes /></ProtectedRoute>} />
             <Route path="/r" element={<FromReddit />} />
             <Route path="/from-reddit" element={<FromReddit />} />
+            <Route path="/privacy" element={<Privacy />} />
+            <Route path="/terms" element={<Terms />} />
+            <Route path="/editorial-standards" element={<EditorialStandards />} />
+            <Route path="/admin" element={<ProtectedRoute><AdminDashboard /></ProtectedRoute>} />
           </Routes>
+          <Footer />
         </BrowserRouter>
       </AuthProvider>
     </div>

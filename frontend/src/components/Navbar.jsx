@@ -53,7 +53,8 @@ export default function Navbar() {
     { to: "/analyze", label: "Analyze", show: !!user },
     { to: "/live", label: "Live", show: !!user },
     { to: "/legitimacy", label: "Verify", show: !!user },
-    { to: "/admin/affiliates", label: "Admin", show: !!user?.is_admin },
+    { to: "/admin", label: "Console", show: !!user?.is_admin },
+    { to: "/admin/affiliates", label: "Affiliates", show: !!user?.is_admin },
     { to: "/admin/disputes", label: "Disputes", show: !!user?.is_admin },
   ];
   const visibleItems = navItems.filter((i) => i.show);
