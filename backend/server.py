@@ -44,8 +44,21 @@ JWT_SECRET = os.environ["JWT_SECRET"]
 STRIPE_API_KEY = os.environ.get("STRIPE_API_KEY", "sk_test_emergent")
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
 SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "onboarding@resend.dev")
+SENDER_NAME = os.environ.get("SENDER_NAME", "Casino Spotter")
+REPLY_TO = os.environ.get("REPLY_TO", "")  # optional; empty disables Reply-To header
+# Format the From header: "Casino Spotter <noreply@casforensics.org>"
+SENDER_FROM = f"{SENDER_NAME} <{SENDER_EMAIL}>" if "<" not in SENDER_EMAIL else SENDER_EMAIL
 if RESEND_API_KEY:
     resend.api_key = RESEND_API_KEY
+
+
+async def resend_send(params: dict) -> dict:
+    """Wrap Resend send to inject standard From name + Reply-To header."""
+    payload = {**params, "from": params.get("from") or SENDER_FROM}
+    if REPLY_TO and "reply_to" not in payload:
+        payload["reply_to"] = [REPLY_TO]
+    return await asyncio.to_thread(resend.Emails.send, payload)
+
 JWT_ALGO = "HS256"
 JWT_EXP_DAYS = 7
 
@@ -595,8 +608,7 @@ async def _send_onboarding_email(user_doc: dict, kind: str):
     name = (user_doc.get("name") or "operator").split("@")[0][:24]
     html = template["html_template"].format(name=name, site=site)
     try:
-        await asyncio.to_thread(resend.Emails.send, {
-            "from": SENDER_EMAIL,
+        await resend_send({
             "to": [user_doc["email"]],
             "subject": template["subject"],
             "html": html,
@@ -724,10 +736,8 @@ async def _issue_and_send_verification(user_doc: dict, origin: str) -> str:
     if RESEND_API_KEY:
         content = _verify_email_email(user_doc.get("name", ""), link)
         try:
-            await asyncio.to_thread(
-                resend.Emails.send,
+            await resend_send(
                 {
-                    "from": SENDER_EMAIL,
                     "to": [user_doc["email"]],
                     "subject": content["subject"],
                     "html": content["html"],
@@ -804,10 +814,8 @@ async def forgot_password(req: ForgotPasswordReq, request: FastAPIRequest):
     if RESEND_API_KEY:
         content = _password_reset_email(user.get("name", ""), reset_link)
         try:
-            await asyncio.to_thread(
-                resend.Emails.send,
+            await resend_send(
                 {
-                    "from": SENDER_EMAIL,
                     "to": [user["email"]],
                     "subject": content["subject"],
                     "html": content["html"],
@@ -1589,8 +1597,7 @@ async def submit_dispute(req: DisputeReq, request: FastAPIRequest):
 </ul>
 <blockquote style="border-left:3px solid #00ff41;padding-left:12px;color:#555;">{req.response_text}</blockquote>
 <p>Moderate at /admin/disputes</p>"""
-            await asyncio.to_thread(resend.Emails.send, {
-                "from": SENDER_EMAIL,
+            await resend_send({
                 "to": [ADMIN_EMAIL],
                 "subject": f"[Dispute] {req.casino_name} — {req.target_type}",
                 "html": html,
@@ -2766,14 +2773,13 @@ async def digest_send(req: DigestSendReq, user=Depends(require_admin)):
     for r in recipients:
         unsub_link = f"{site_url}/unsubscribe?token={make_unsub_token(r['id'])}"
         params = {
-            "from": SENDER_EMAIL,
             "to": [r["email"]],
             "subject": content["subject"],
             "html": content["html"].replace("{unsub_link}", unsub_link),
             "text": content["text"].replace("{unsub_link}", unsub_link),
         }
         try:
-            await asyncio.to_thread(resend.Emails.send, params)
+            await resend_send(params)
             sent += 1
         except Exception as e:
             logger.exception(f"Failed to email {r['email']}: {e}")
