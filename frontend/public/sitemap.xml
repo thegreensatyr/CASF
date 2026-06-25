@@ -1,11 +1,21 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-  <url><loc>https://www.casforensics.org/</loc><priority>1.0</priority></url>
-  <url><loc>https://www.casforensics.org/techniques</loc><priority>0.9</priority></url>
-  <url><loc>https://www.casforensics.org/reports</loc><priority>0.9</priority></url>
-  <url><loc>https://www.casforensics.org/legitimacy</loc><priority>0.8</priority></url>
-  <url><loc>https://www.casforensics.org/compare</loc><priority>0.7</priority></url>
-  <url><loc>https://www.casforensics.org/scams</loc><priority>0.8</priority></url>
-  <url><loc>https://www.casforensics.org/pricing</loc><priority>0.6</priority></url>
-  <url><loc>https://www.casforensics.org/audit</loc><priority>0.7</priority></url>
+  <url><loc>https://casforensics.org/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>
+  <url><loc>https://casforensics.org/techniques</loc><changefreq>weekly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://casforensics.org/reports</loc><changefreq>weekly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://casforensics.org/scams</loc><changefreq>daily</changefreq><priority>0.8</priority></url>
+  <url><loc>https://casforensics.org/legitimacy</loc><changefreq>weekly</changefreq><priority>0.8</priority></url>
+  <url><loc>https://casforensics.org/compare</loc><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://casforensics.org/audit</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://casforensics.org/verified</loc><changefreq>monthly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://casforensics.org/pricing</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
+
+  <url><loc>https://casforensics.org/techniques/near-miss</loc><lastmod>2026-02-18</lastmod><changefreq>monthly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://casforensics.org/techniques/delayed-withdrawal</loc><lastmod>2026-02-18</lastmod><changefreq>monthly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://casforensics.org/techniques/bonus-traps</loc><lastmod>2026-02-18</lastmod><changefreq>monthly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://casforensics.org/techniques/slow-reveal</loc><lastmod>2026-02-18</lastmod><changefreq>monthly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://casforensics.org/techniques/false-rtp</loc><lastmod>2026-02-18</lastmod><changefreq>monthly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://casforensics.org/techniques/rigged-rng</loc><lastmod>2026-02-18</lastmod><changefreq>monthly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://casforensics.org/techniques/live-dealer-shills</loc><lastmod>2026-02-18</lastmod><changefreq>monthly</changefreq><priority>0.9</priority></url>
+  <url><loc>https://casforensics.org/techniques/vip-manipulation</loc><lastmod>2026-02-18</lastmod><changefreq>monthly</changefreq><priority>0.9</priority></url>
 </urlset>
