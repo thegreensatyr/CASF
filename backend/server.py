@@ -43,9 +43,18 @@ EMERGENT_LLM_KEY = os.environ["EMERGENT_LLM_KEY"]
 JWT_SECRET = os.environ["JWT_SECRET"]
 STRIPE_API_KEY = os.environ.get("STRIPE_API_KEY", "sk_test_emergent")
 RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
-SENDER_EMAIL = os.environ.get("SENDER_EMAIL", "onboarding@resend.dev")
-SENDER_NAME = os.environ.get("SENDER_NAME", "Casino Spotter")
-REPLY_TO = os.environ.get("REPLY_TO", "")  # optional; empty disables Reply-To header
+# Sender/Reply config — defaults baked in so emails work even if production
+# env vars weren't updated after Resend DNS verification. If the deployed
+# .env still carries the Resend sandbox sender, override to the verified domain.
+_PROD_DEFAULT_SENDER = "noreply@casforensics.org"
+_RESEND_SANDBOX = "onboarding@resend.dev"
+_raw_sender = (os.environ.get("SENDER_EMAIL") or "").strip()
+if not _raw_sender or _raw_sender == _RESEND_SANDBOX:
+    _raw_sender = _PROD_DEFAULT_SENDER
+SENDER_EMAIL = _raw_sender
+SENDER_NAME = (os.environ.get("SENDER_NAME") or "Casino Spotter").strip()
+REPLY_TO = (os.environ.get("REPLY_TO") or "casforensics@gmail.com").strip()
+SITE_URL = (os.environ.get("SITE_URL") or "https://casforensics.org").rstrip("/")
 # Format the From header: "Casino Spotter <noreply@casforensics.org>"
 SENDER_FROM = f"{SENDER_NAME} <{SENDER_EMAIL}>" if "<" not in SENDER_EMAIL else SENDER_EMAIL
 if RESEND_API_KEY:
@@ -604,7 +613,7 @@ async def _send_onboarding_email(user_doc: dict, kind: str):
     if already:
         return
     template = ONBOARDING_EMAILS[kind]
-    site = os.environ.get("SITE_URL", "").rstrip("/") or "https://casforensics.org"
+    site = SITE_URL
     name = (user_doc.get("name") or "operator").split("@")[0][:24]
     html = template["html_template"].format(name=name, site=site)
     try:
@@ -706,7 +715,7 @@ def _verify_email_email(name: str, link: str) -> dict:
 def _resolve_origin(origin_url: Optional[str], request: FastAPIRequest) -> str:
     origin = (origin_url or "").rstrip("/")
     if not origin:
-        origin = os.environ.get("SITE_URL", "").rstrip("/")
+        origin = SITE_URL
     if not origin:
         host = request.headers.get("x-forwarded-host") or request.url.hostname
         scheme = request.headers.get("x-forwarded-proto") or "https"
@@ -2584,12 +2593,12 @@ async def deep_audit_result(session_id: str, http_request: FastAPIRequest, user=
 # ============= SEO =============
 @app.get("/api/sitemap.xml")
 async def sitemap(request: FastAPIRequest):
-    # Use SITE_URL env if provided, else derive from request host
-    base = os.environ.get("SITE_URL", "").rstrip("/")
+    # Use SITE_URL constant (env-overridable) else derive from request host
+    base = SITE_URL
     if not base:
         host = request.headers.get("x-forwarded-host") or request.url.hostname
         scheme = request.headers.get("x-forwarded-proto") or "https"
-        base = f"{scheme}://{host}" if host else "https://scam-spotter-casino.preview.emergentagent.com"
+        base = f"{scheme}://{host}" if host else "https://casforensics.org"
     static_urls = ["/", "/techniques", "/reports", "/scams", "/pricing", "/compare"]
     docs = await db.legitimacy_reports.find({"slug": {"$exists": True}}, {"_id": 0, "slug": 1, "created_at": 1}).to_list(2000)
     techniques = [t["slug"] for t in TECHNIQUES_SEED]
@@ -2742,7 +2751,7 @@ async def build_digest_html(site_url: str) -> dict:
 
 @api_router.get("/digest/preview")
 async def digest_preview(user=Depends(require_admin)):
-    site_url = os.environ.get("SITE_URL", "https://scam-spotter-casino.preview.emergentagent.com").rstrip("/")
+    site_url = SITE_URL
     content = await build_digest_html(site_url)
     sample = content["html"].replace("{unsub_link}", f"{site_url}/unsubscribe?token=SAMPLE")
     return {"subject": content["subject"], "html": sample, "casino_count": content["casino_count"]}
@@ -2756,7 +2765,7 @@ class DigestSendReq(BaseModel):
 async def digest_send(req: DigestSendReq, user=Depends(require_admin)):
     if not RESEND_API_KEY:
         raise HTTPException(500, "RESEND_API_KEY not configured")
-    site_url = os.environ.get("SITE_URL", "https://scam-spotter-casino.preview.emergentagent.com").rstrip("/")
+    site_url = SITE_URL
     content = await build_digest_html(site_url)
 
     # Recipients: admin only if test, otherwise all subscribed users
