@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
-import { ShieldCheck, Eye, Brain, Cpu, AlertTriangle, ScanLine } from "lucide-react";
+import { ShieldCheck, Eye, Brain, Cpu, AlertTriangle, ScanLine, Search, Megaphone } from "lucide-react";
 import HowItWorks from "../components/HowItWorks";
 import ActivityFeed from "../components/ActivityFeed";
 import CommunityQuote from "../components/CommunityQuote";
@@ -62,6 +62,85 @@ export default function Landing() {
                 <div className="text-xs uppercase tracking-widest text-white/60">{s.v}</div>
               </div>
             ))}
+          </div>
+        </div>
+      </section>
+
+      {/* === BEFORE YOU DEPOSIT: 2-check CTA banner === */}
+      <section className="relative border-b border-white/10 bg-gradient-to-b from-black via-[var(--neon-glow)]/10 to-black">
+        <div className="absolute inset-0 grid-bg opacity-20" />
+        <div className="relative max-w-7xl mx-auto px-6 md:px-12 py-16 md:py-24">
+          <div className="flex items-center gap-2 mb-4">
+            <AlertTriangle className="w-4 h-4 text-[var(--neon)]" />
+            <span className="text-xs uppercase tracking-[0.3em] text-[var(--neon)]">before you deposit</span>
+          </div>
+          <h2 className="font-heading text-3xl md:text-5xl tracking-tighter max-w-3xl mb-3">
+            Thinking about playing at an online casino?<br/>
+            <span className="neon-text">Do these 2 checks first.</span>
+          </h2>
+          <p className="text-sm md:text-base text-white/70 font-mono max-w-2xl mb-10">
+            &gt; 30 seconds of due diligence saves the average player $400 on a first deposit at a sketchy site.
+            Both tools are free to try.
+          </p>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            {/* Card 1 — Verify the casino */}
+            <div className="panel p-7 md:p-8 border border-[var(--neon)]/30 hover:border-[var(--neon)] transition group relative overflow-hidden">
+              <div className="absolute -top-8 -right-8 w-32 h-32 rounded-full bg-[var(--neon)]/10 blur-3xl group-hover:bg-[var(--neon)]/20 transition" />
+              <div className="relative">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="text-[10px] uppercase tracking-[0.3em] text-[var(--neon)]">// check 01</span>
+                  <Search className="w-4 h-4 text-[var(--neon)]" />
+                </div>
+                <h3 className="font-heading text-2xl md:text-3xl tracking-tighter mb-3">
+                  Is this casino <span className="neon-text">legit</span>?
+                </h3>
+                <p className="text-sm text-white/70 font-mono mb-6 leading-relaxed">
+                  Type the casino&apos;s name or URL. Our AI cross-references licenses, payout
+                  complaints, and 8 known manipulation patterns — returns a 0-100 trust score
+                  with red &amp; green flags in under 30 seconds.
+                </p>
+                <Link
+                  to="/legitimacy"
+                  className="btn-neon inline-flex items-center gap-2"
+                  data-testid="home-cta-verify-casino"
+                >
+                  <ShieldCheck className="w-4 h-4" /> RUN TRUST CHECK &gt;_
+                </Link>
+                <p className="text-[10px] text-white/40 font-mono mt-4">
+                  Free to start · Powered by Claude Sonnet 4.5
+                </p>
+              </div>
+            </div>
+
+            {/* Card 2 — Check the scam wall */}
+            <div className="panel p-7 md:p-8 border border-[var(--warn)]/30 hover:border-[var(--warn)] transition group relative overflow-hidden">
+              <div className="absolute -top-8 -right-8 w-32 h-32 rounded-full bg-[var(--warn)]/10 blur-3xl group-hover:bg-[var(--warn)]/20 transition" />
+              <div className="relative">
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="text-[10px] uppercase tracking-[0.3em] text-[var(--warn)]">// check 02</span>
+                  <Megaphone className="w-4 h-4 text-[var(--warn)]" />
+                </div>
+                <h3 className="font-heading text-2xl md:text-3xl tracking-tighter mb-3">
+                  What are <span className="text-[var(--warn)]">other players</span> saying?
+                </h3>
+                <p className="text-sm text-white/70 font-mono mb-6 leading-relaxed">
+                  Browse {stats?.scam_reports ? `${stats.scam_reports}+` : "real"} documented
+                  player complaints — confiscated winnings, stalled withdrawals, VIP traps. Each
+                  with a link to the original public source so you can verify the story yourself.
+                </p>
+                <Link
+                  to="/scams"
+                  className="btn-ghost inline-flex items-center gap-2 border-[var(--warn)]/50 text-[var(--warn)] hover:bg-[var(--warn)]/10"
+                  data-testid="home-cta-scam-wall"
+                >
+                  <AlertTriangle className="w-4 h-4" /> SEE THE WALL &gt;_
+                </Link>
+                <p className="text-[10px] text-white/40 font-mono mt-4">
+                  No signup required · Sourced from Reddit, AskGamblers, CasinoGuru
+                </p>
+              </div>
+            </div>
           </div>
         </div>
       </section>
