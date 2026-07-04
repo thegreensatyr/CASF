@@ -2015,6 +2015,88 @@ async def research_casino(req: LegitimacyReq, user=Depends(get_current_user)):
     return LegitimacyOut(**public_doc)
 
 
+# ============= Score-disagreement feedback =============
+class ScoreDisagreementReq(BaseModel):
+    slug: Optional[str] = None
+    casino_name: str
+    current_score: int
+    proposed_score: int
+    reason: str
+    firsthand: bool = False
+
+
+@api_router.post("/legitimacy/disagree")
+async def submit_score_disagreement(req: ScoreDisagreementReq, user=Depends(get_current_user)):
+    # Rate-limit: max 3 disagreement submissions per user per 24h.
+    day_ago = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    recent = await db.score_disagreements.count_documents({
+        "user_id": user["id"],
+        "created_at": {"$gte": day_ago},
+    })
+    if recent >= 3 and not is_admin_user(user):
+        raise HTTPException(429, "Max 3 score-disagreement submissions per 24 hours.")
+
+    if not (0 <= req.proposed_score <= 100):
+        raise HTTPException(400, "Proposed score must be between 0 and 100.")
+    if len(req.reason.strip()) < 20:
+        raise HTTPException(400, "Please provide at least 20 characters of context.")
+
+    doc = {
+        "id": str(uuid.uuid4()),
+        "user_id": user["id"],
+        "user_email": user.get("email"),
+        "slug": req.slug,
+        "casino_name": req.casino_name[:120],
+        "current_score": int(req.current_score),
+        "proposed_score": int(req.proposed_score),
+        "reason": req.reason[:2000],
+        "firsthand": bool(req.firsthand),
+        "status": "pending",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.score_disagreements.insert_one(doc)
+
+    # Notify admin (best-effort, fire-and-forget)
+    if RESEND_API_KEY and ADMIN_EMAIL:
+        try:
+            firsthand_tag = "🔒 FIRSTHAND EXPERIENCE" if req.firsthand else "third-party observation"
+            html = f"""<!doctype html>
+<html><body style="font-family:'JetBrains Mono',monospace;background:#0a0a0a;color:#fff;padding:32px;">
+<div style="max-width:560px;margin:0 auto;background:#0d0d0d;border:1px solid rgba(0,255,65,0.25);border-radius:8px;padding:28px;">
+<div style="font-size:11px;letter-spacing:.3em;color:#00ff41;text-transform:uppercase;margin-bottom:8px;">// score disagreement</div>
+<h2 style="font-family:Unbounded,Arial,sans-serif;color:#fff;margin:0 0 16px;font-size:20px;">{req.casino_name}</h2>
+<table style="width:100%;font-size:13px;margin-bottom:16px;">
+<tr><td style="color:#888;padding:4px 0;">Current AI score:</td><td style="color:#ff5555;font-weight:700;">{req.current_score}/100</td></tr>
+<tr><td style="color:#888;padding:4px 0;">User proposes:</td><td style="color:#00ff41;font-weight:700;">{req.proposed_score}/100</td></tr>
+<tr><td style="color:#888;padding:4px 0;">Signal type:</td><td>{firsthand_tag}</td></tr>
+<tr><td style="color:#888;padding:4px 0;">From:</td><td>{user.get('email','anon')}</td></tr>
+</table>
+<div style="border-top:1px solid rgba(255,255,255,0.1);padding-top:16px;">
+<div style="font-size:10px;color:#888;text-transform:uppercase;letter-spacing:.2em;margin-bottom:6px;">Reason</div>
+<div style="color:#ddd;line-height:1.6;font-size:13px;white-space:pre-wrap;">{req.reason}</div>
+</div>
+</div>
+</body></html>"""
+            asyncio.create_task(resend_send({
+                "to": [ADMIN_EMAIL],
+                "subject": f"[Score Disagreement] {req.casino_name}: {req.current_score}→{req.proposed_score}",
+                "html": html,
+            }))
+        except Exception:
+            logger.exception("Failed to send score-disagreement notification")
+
+    return {"ok": True, "message": "Thanks — your calibration signal has been recorded."}
+
+
+@api_router.get("/admin/score-disagreements")
+async def admin_list_disagreements(status: Optional[str] = None, limit: int = 50, user=Depends(require_admin)):
+    q = {}
+    if status:
+        q["status"] = status
+    docs = await db.score_disagreements.find(q, {"_id": 0}).sort("created_at", -1).limit(min(limit, 200)).to_list(200)
+    return {"count": len(docs), "items": docs}
+
+
 @api_router.get("/legitimacy/history", response_model=List[LegitimacyOut])
 async def legit_history(user=Depends(get_current_user)):
     docs = await db.legitimacy_reports.find(
