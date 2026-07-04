@@ -54,6 +54,7 @@ export default function Navbar() {
     { to: "/live", label: "Live", show: !!user },
     { to: "/legitimacy", label: "Verify", show: !!user },
     { to: "/admin", label: "Console", show: !!user?.is_admin },
+    { to: "/admin/disagreements", label: "Scores", show: !!user?.is_admin },
     { to: "/admin/affiliates", label: "Affiliates", show: !!user?.is_admin },
     { to: "/admin/disputes", label: "Disputes", show: !!user?.is_admin },
   ];

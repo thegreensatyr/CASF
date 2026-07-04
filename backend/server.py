@@ -1915,6 +1915,27 @@ async def research_casino(req: LegitimacyReq, user=Depends(get_current_user)):
     else:
         wall_signal = f"ELEVATED CONCERN: {wall_count} player complaints on our community Scam Wall."
 
+    # Approved firsthand disagreements — reviewed by admin as credible signal.
+    # These are player-submitted score corrections the site owner has explicitly approved.
+    disagreement_docs = await db.score_disagreements.find(
+        {
+            "status": "approved",
+            "casino_name": {"$regex": f"^{re.escape(req.casino_name)}$", "$options": "i"},
+        },
+        {"_id": 0, "reason": 1, "proposed_score": 1, "firsthand": 1},
+    ).sort("created_at", -1).limit(5).to_list(5)
+    if disagreement_docs:
+        lines = [
+            f"  - proposed {d['proposed_score']}/100 ({'firsthand' if d.get('firsthand') else 'observer'}): {d['reason'][:300]}"
+            for d in disagreement_docs
+        ]
+        disagreement_signal = (
+            f"ADMIN-APPROVED PLAYER FEEDBACK ({len(disagreement_docs)} entries) — treat as credible weight:\n"
+            + "\n".join(lines)
+        )
+    else:
+        disagreement_signal = "No admin-approved player feedback on record."
+
     system_msg = (
         "You are an online-gambling regulatory and forensic analyst. Given a casino name (and optional URL), "
         "produce a trust assessment based on publicly known information about licensing (MGA, UKGC, Curacao, "
@@ -1950,7 +1971,8 @@ async def research_casino(req: LegitimacyReq, user=Depends(get_current_user)):
             f"Casino name: {req.casino_name}\n"
             f"Casino URL: {req.casino_url or 'not provided'}\n"
             f"Internal database hint: {db_hint}\n"
-            f"Community Scam Wall signal: {wall_signal}\n\n"
+            f"Community Scam Wall signal: {wall_signal}\n"
+            f"{disagreement_signal}\n\n"
             "Produce the trust assessment."
         )
         response = await chat.send_message(UserMessage(text=prompt))
@@ -2095,6 +2117,42 @@ async def admin_list_disagreements(status: Optional[str] = None, limit: int = 50
         q["status"] = status
     docs = await db.score_disagreements.find(q, {"_id": 0}).sort("created_at", -1).limit(min(limit, 200)).to_list(200)
     return {"count": len(docs), "items": docs}
+
+
+class DisagreementActionResp(BaseModel):
+    ok: bool
+    status: str
+    cache_cleared: int = 0
+
+
+@api_router.post("/admin/score-disagreements/{disagreement_id}/approve", response_model=DisagreementActionResp)
+async def admin_approve_disagreement(disagreement_id: str, user=Depends(require_admin)):
+    doc = await db.score_disagreements.find_one({"id": disagreement_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Disagreement not found")
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.score_disagreements.update_one(
+        {"id": disagreement_id},
+        {"$set": {"status": "approved", "reviewed_at": now_iso, "reviewed_by": user.get("email")}},
+    )
+    # Clear the cached legitimacy report so the next lookup triggers a fresh scan
+    # (which will now include this disagreement in the LLM prompt).
+    name_lower = doc["casino_name"].strip().lower()
+    result = await db.legitimacy_reports.delete_many({"casino_name_lower": name_lower})
+    return DisagreementActionResp(ok=True, status="approved", cache_cleared=result.deleted_count)
+
+
+@api_router.post("/admin/score-disagreements/{disagreement_id}/reject", response_model=DisagreementActionResp)
+async def admin_reject_disagreement(disagreement_id: str, user=Depends(require_admin)):
+    doc = await db.score_disagreements.find_one({"id": disagreement_id}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "Disagreement not found")
+    now_iso = datetime.now(timezone.utc).isoformat()
+    await db.score_disagreements.update_one(
+        {"id": disagreement_id},
+        {"$set": {"status": "rejected", "reviewed_at": now_iso, "reviewed_by": user.get("email")}},
+    )
+    return DisagreementActionResp(ok=True, status="rejected")
 
 
 @api_router.get("/legitimacy/history", response_model=List[LegitimacyOut])

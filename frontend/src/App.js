@@ -30,6 +30,7 @@ import Privacy from "./pages/Privacy";
 import Terms from "./pages/Terms";
 import EditorialStandards from "./pages/EditorialStandards";
 import AdminDashboard from "./pages/AdminDashboard";
+import AdminDisagreements from "./pages/AdminDisagreements";
 import VerifyEmail from "./pages/VerifyEmail";
 import VerifyEmailBanner from "./components/VerifyEmailBanner";
 import Footer from "./components/Footer";
@@ -92,6 +93,7 @@ function App() {
             <Route path="/terms" element={<Terms />} />
             <Route path="/editorial-standards" element={<EditorialStandards />} />
             <Route path="/admin" element={<ProtectedRoute><AdminDashboard /></ProtectedRoute>} />
+            <Route path="/admin/disagreements" element={<ProtectedRoute><AdminDisagreements /></ProtectedRoute>} />
           </Routes>
           <Footer />
         </BrowserRouter>
