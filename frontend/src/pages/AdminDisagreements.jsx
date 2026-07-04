@@ -31,7 +31,11 @@ export default function AdminDisagreements() {
     try {
       const { data } = await api.post(`/admin/score-disagreements/${id}/${action}`);
       if (action === "approve") {
-        toast.success(`Approved. Cache cleared for ${data.cache_cleared} report(s) — next scan will factor this in.`);
+        if (data.rescan_ok && data.new_score != null) {
+          toast.success(`Approved. AI rescanned → new score: ${data.new_score}/100. Live now.`);
+        } else {
+          toast.success(`Approved. Cache cleared (${data.cache_cleared} report(s)) — rescan will run on next visit.`);
+        }
       } else {
         toast.success("Rejected.");
       }

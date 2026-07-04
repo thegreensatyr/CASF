@@ -1855,41 +1855,14 @@ KNOWN_CASINOS = {
 }
 
 
-@api_router.post("/legitimacy/research", response_model=LegitimacyOut)
-async def research_casino(req: LegitimacyReq, user=Depends(get_current_user)):
-    await check_free_quota(user, "free_trust_checks_used", FREE_TRUST_CHECKS_LIMIT)
-    name_lower = req.casino_name.lower().strip()
-
-    # ============ LLM RESULT CACHE (cost control before advertising) ============
-    # Reuse a recent identical-query report for 24h. Saves $0.05-$0.10 per cache hit.
-    # Cached responses are also surfaced to the requester via their own report record.
-    cache_cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
-    cached = await db.legitimacy_reports.find_one(
-        {
-            "casino_name_lower": name_lower,
-            "created_at": {"$gte": cache_cutoff},
-            "is_cache_seed": True,  # only canonical, ad-safe entries
-        },
-        {"_id": 0},
-        sort=[("created_at", -1)],
-    )
-    if cached:
-        # Clone the cached payload but reassign ownership + bump quota for the new user
-        new_id = str(uuid.uuid4())
-        new_slug = make_slug(req.casino_name) + "-" + new_id[:6]
-        clone = {
-            **cached,
-            "id": new_id,
-            "slug": new_slug,
-            "user_id": user["id"],
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "public": False,
-            "is_cache_seed": False,
-            "served_from_cache": True,
-        }
-        await db.legitimacy_reports.insert_one(clone)
-        await bump_free_quota(user, "free_trust_checks_used")
-        return LegitimacyOut(**{k: v for k, v in clone.items() if k not in ("user_id", "is_cache_seed", "casino_name_lower")})
+async def _generate_legitimacy_doc(
+    casino_name: str,
+    casino_url: Optional[str],
+    user_id_for_record: str,
+) -> dict:
+    """Runs the full LLM legitimacy analysis and persists a fresh legitimacy_report doc.
+    Returns the persisted dict (with keys stripped for public exposure by caller if needed)."""
+    name_lower = casino_name.lower().strip()
 
     db_hint = "no direct match in our curated database"
     for s in KNOWN_CASINOS["scams"]:
@@ -1902,11 +1875,8 @@ async def research_casino(req: LegitimacyReq, user=Depends(get_current_user)):
                 db_hint = f"PRESENT in our curated list of reputable, well-licensed operators: '{r}'"
                 break
 
-    # Community signal from our own Scam Wall — count posts referencing this casino.
-    # 0 posts = no player-harm reports on our platform (mildly positive signal).
-    # 3+ posts = elevated community concern.
     wall_count = await db.scam_posts.count_documents({
-        "casino_name": {"$regex": f"^{re.escape(req.casino_name)}$", "$options": "i"}
+        "casino_name": {"$regex": f"^{re.escape(casino_name)}$", "$options": "i"}
     })
     if wall_count == 0:
         wall_signal = "No player-harm reports on our community Scam Wall (mildly positive signal)."
@@ -1915,12 +1885,10 @@ async def research_casino(req: LegitimacyReq, user=Depends(get_current_user)):
     else:
         wall_signal = f"ELEVATED CONCERN: {wall_count} player complaints on our community Scam Wall."
 
-    # Approved firsthand disagreements — reviewed by admin as credible signal.
-    # These are player-submitted score corrections the site owner has explicitly approved.
     disagreement_docs = await db.score_disagreements.find(
         {
             "status": "approved",
-            "casino_name": {"$regex": f"^{re.escape(req.casino_name)}$", "$options": "i"},
+            "casino_name": {"$regex": f"^{re.escape(casino_name)}$", "$options": "i"},
         },
         {"_id": 0, "reason": 1, "proposed_score": 1, "firsthand": 1},
     ).sort("created_at", -1).limit(5).to_list(5)
@@ -1960,26 +1928,22 @@ async def research_casino(req: LegitimacyReq, user=Depends(get_current_user)):
         "If you're rating an unknown/new operator, explicitly acknowledge that limited public info is not the same as negative signal.>"
     )
 
-    try:
-        chat = LlmChat(
-            api_key=EMERGENT_LLM_KEY,
-            session_id=f"legit-{uuid.uuid4()}",
-            system_message=system_msg,
-        ).with_model("anthropic", "claude-sonnet-4-5-20250929")
+    chat = LlmChat(
+        api_key=EMERGENT_LLM_KEY,
+        session_id=f"legit-{uuid.uuid4()}",
+        system_message=system_msg,
+    ).with_model("anthropic", "claude-sonnet-4-5-20250929")
 
-        prompt = (
-            f"Casino name: {req.casino_name}\n"
-            f"Casino URL: {req.casino_url or 'not provided'}\n"
-            f"Internal database hint: {db_hint}\n"
-            f"Community Scam Wall signal: {wall_signal}\n"
-            f"{disagreement_signal}\n\n"
-            "Produce the trust assessment."
-        )
-        response = await chat.send_message(UserMessage(text=prompt))
-        text = str(response)
-    except Exception as e:
-        logger.exception("Claude legit failed")
-        raise HTTPException(500, f"Research failed: {str(e)}")
+    prompt = (
+        f"Casino name: {casino_name}\n"
+        f"Casino URL: {casino_url or 'not provided'}\n"
+        f"Internal database hint: {db_hint}\n"
+        f"Community Scam Wall signal: {wall_signal}\n"
+        f"{disagreement_signal}\n\n"
+        "Produce the trust assessment."
+    )
+    response = await chat.send_message(UserMessage(text=prompt))
+    text = str(response)
 
     trust_score = 50
     verdict = "Unknown"
@@ -2012,26 +1976,67 @@ async def research_casino(req: LegitimacyReq, user=Depends(get_current_user)):
         elif capture_report:
             report_lines.append(line)
 
-    report = "\n".join(report_lines).strip() or text
+    report_text = "\n".join(report_lines).strip() or text
 
     record_id = str(uuid.uuid4())
     doc = {
         "id": record_id,
-        "user_id": user["id"],
-        "casino_name": req.casino_name,
+        "user_id": user_id_for_record,
+        "casino_name": casino_name,
         "casino_name_lower": name_lower,
-        "casino_url": req.casino_url,
+        "casino_url": casino_url,
         "trust_score": max(0, min(100, trust_score)),
         "verdict": verdict,
-        "report": report,
+        "report": report_text,
         "red_flags": red_flags,
         "green_flags": green_flags,
-        "slug": make_slug(req.casino_name),
+        "slug": make_slug(casino_name),
         "created_at": datetime.now(timezone.utc).isoformat(),
-        "is_cache_seed": True,           # eligible for 24h cache reuse
+        "is_cache_seed": True,
         "served_from_cache": False,
     }
     await db.legitimacy_reports.insert_one(doc)
+    return doc
+
+
+@api_router.post("/legitimacy/research", response_model=LegitimacyOut)
+async def research_casino(req: LegitimacyReq, user=Depends(get_current_user)):
+    await check_free_quota(user, "free_trust_checks_used", FREE_TRUST_CHECKS_LIMIT)
+    name_lower = req.casino_name.lower().strip()
+
+    # ============ LLM RESULT CACHE (cost control before advertising) ============
+    cache_cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    cached = await db.legitimacy_reports.find_one(
+        {
+            "casino_name_lower": name_lower,
+            "created_at": {"$gte": cache_cutoff},
+            "is_cache_seed": True,
+        },
+        {"_id": 0},
+        sort=[("created_at", -1)],
+    )
+    if cached:
+        new_id = str(uuid.uuid4())
+        new_slug = make_slug(req.casino_name) + "-" + new_id[:6]
+        clone = {
+            **cached,
+            "id": new_id,
+            "slug": new_slug,
+            "user_id": user["id"],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "is_cache_seed": False,
+            "served_from_cache": True,
+        }
+        await db.legitimacy_reports.insert_one(clone)
+        await bump_free_quota(user, "free_trust_checks_used")
+        public_clone = {k: v for k, v in clone.items() if k not in ("user_id", "is_cache_seed", "casino_name_lower")}
+        return LegitimacyOut(**public_clone)
+
+    try:
+        doc = await _generate_legitimacy_doc(req.casino_name, req.casino_url, user["id"])
+    except Exception as e:
+        logger.exception("Claude legit failed")
+        raise HTTPException(500, f"Research failed: {str(e)}")
     await bump_free_quota(user, "free_trust_checks_used")
     public_doc = {k: v for k, v in doc.items() if k not in ("user_id", "is_cache_seed", "casino_name_lower")}
     return LegitimacyOut(**public_doc)
@@ -2123,6 +2128,8 @@ class DisagreementActionResp(BaseModel):
     ok: bool
     status: str
     cache_cleared: int = 0
+    rescan_ok: bool = False
+    new_score: Optional[int] = None
 
 
 @api_router.post("/admin/score-disagreements/{disagreement_id}/approve", response_model=DisagreementActionResp)
@@ -2136,10 +2143,39 @@ async def admin_approve_disagreement(disagreement_id: str, user=Depends(require_
         {"$set": {"status": "approved", "reviewed_at": now_iso, "reviewed_by": user.get("email")}},
     )
     # Clear the cached legitimacy report so the next lookup triggers a fresh scan
-    # (which will now include this disagreement in the LLM prompt).
     name_lower = doc["casino_name"].strip().lower()
     result = await db.legitimacy_reports.delete_many({"casino_name_lower": name_lower})
-    return DisagreementActionResp(ok=True, status="approved", cache_cleared=result.deleted_count)
+
+    # Immediately trigger a fresh AI rescan so the corrected score is live for the
+    # next visitor (no waiting for someone to hit /legitimacy). Best-effort — if
+    # the LLM call fails, the cache is still cleared and the next visitor triggers it.
+    rescan_ok = False
+    new_score = None
+    try:
+        casino_url = doc.get("casino_url")
+        # find the last known casino_url if the disagreement didn't include one
+        if not casino_url:
+            last = await db.legitimacy_reports.find_one(
+                {"casino_name_lower": name_lower, "casino_url": {"$ne": None}},
+                {"_id": 0, "casino_url": 1},
+                sort=[("created_at", -1)],
+            )
+            if last:
+                casino_url = last.get("casino_url")
+        fresh = await _generate_legitimacy_doc(doc["casino_name"], casino_url, user["id"])
+        rescan_ok = True
+        new_score = fresh.get("trust_score")
+        logger.info(f"[rescan] {doc['casino_name']}: fresh score={new_score}")
+    except Exception as e:
+        logger.exception(f"[rescan] failed for {doc['casino_name']}: {e}")
+
+    return DisagreementActionResp(
+        ok=True,
+        status="approved",
+        cache_cleared=result.deleted_count,
+        rescan_ok=rescan_ok,
+        new_score=new_score,
+    )
 
 
 @api_router.post("/admin/score-disagreements/{disagreement_id}/reject", response_model=DisagreementActionResp)
