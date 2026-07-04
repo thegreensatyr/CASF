@@ -1902,20 +1902,41 @@ async def research_casino(req: LegitimacyReq, user=Depends(get_current_user)):
                 db_hint = f"PRESENT in our curated list of reputable, well-licensed operators: '{r}'"
                 break
 
+    # Community signal from our own Scam Wall — count posts referencing this casino.
+    # 0 posts = no player-harm reports on our platform (mildly positive signal).
+    # 3+ posts = elevated community concern.
+    wall_count = await db.scam_posts.count_documents({
+        "casino_name": {"$regex": f"^{re.escape(req.casino_name)}$", "$options": "i"}
+    })
+    if wall_count == 0:
+        wall_signal = "No player-harm reports on our community Scam Wall (mildly positive signal)."
+    elif wall_count < 3:
+        wall_signal = f"{wall_count} player complaint(s) on our community Scam Wall (worth reviewing)."
+    else:
+        wall_signal = f"ELEVATED CONCERN: {wall_count} player complaints on our community Scam Wall."
+
     system_msg = (
         "You are an online-gambling regulatory and forensic analyst. Given a casino name (and optional URL), "
         "produce a trust assessment based on publicly known information about licensing (MGA, UKGC, Curacao, "
-        "Kahnawake, etc.), player complaints, payment history, RNG audits, and ownership transparency. "
-        "Be objective and use measured, defensible language. NEVER state as fact that an operator is a 'scam' "
-        "or is engaged in criminal conduct — instead, describe observed patterns ('reports of delayed withdrawals', "
-        "'concerns about license verification', 'multiple unresolved complaints on AskGamblers'). "
-        "If you don't know the operator, say so and rely on red-flag heuristics. "
+        "Kahnawake, etc.), player complaints, payment history, RNG audits, and ownership transparency.\n\n"
+        "SCORING CALIBRATION (critical — follow this scale strictly):\n"
+        "  0-25  = DOCUMENTED FRAUD: verified non-payment lawsuits, criminal charges, rugpulls, mass license revocations.\n"
+        "  25-45 = CONFIRMED PROBLEM OPERATOR: pattern of payment delays, license loss, regulator fines, or heavy unresolved complaints.\n"
+        "  45-60 = UNKNOWN OR NEW: limited public track record, missing audit info, or opaque ownership BUT no documented player harm. "
+        "Default score for a brand-new crypto/sweepstakes casino with no complaint history should be 55, NOT 42. Absence of information is not evidence of harm.\n"
+        "  60-75 = SOLID: verifiable license, moderate track record, no significant unresolved complaints.\n"
+        "  75-100 = ESTABLISHED TRUSTED BRAND: major licensed operator (UKGC/MGA/SGA), long track record, strong payout history, publicly listed or heavily audited.\n\n"
+        "Be objective and measured. NEVER state as fact that an operator is a 'scam' or engaged in criminal conduct — "
+        "describe observed patterns instead. If information is scarce, LEAD with 'insufficient public information' rather than assuming bad faith. "
+        "Absence of a documented complaint track record for a NEW operator is neutral, not negative.\n"
+        "If our community Scam Wall shows zero player-harm reports, cite that as a mild green flag.\n"
         "Respond EXACTLY in this format:\n"
         "TRUST_SCORE: <integer 0-100>\n"
         "VERDICT: <one-line verdict, choose from: 'Reputable', 'Generally Trusted', 'Caution Advised', 'High Risk', 'Insufficient Information'>\n"
         "RED_FLAGS: <comma-separated short phrases describing observed patterns, or 'none'>\n"
         "GREEN_FLAGS: <comma-separated short phrases, or 'none'>\n"
-        "REPORT: <3-5 paragraph plain-language analysis. Frame all concerns as observations and reports, not accusations.>"
+        "REPORT: <3-5 paragraph plain-language analysis. Frame all concerns as observations and reports, not accusations. "
+        "If you're rating an unknown/new operator, explicitly acknowledge that limited public info is not the same as negative signal.>"
     )
 
     try:
@@ -1928,7 +1949,8 @@ async def research_casino(req: LegitimacyReq, user=Depends(get_current_user)):
         prompt = (
             f"Casino name: {req.casino_name}\n"
             f"Casino URL: {req.casino_url or 'not provided'}\n"
-            f"Internal database hint: {db_hint}\n\n"
+            f"Internal database hint: {db_hint}\n"
+            f"Community Scam Wall signal: {wall_signal}\n\n"
             "Produce the trust assessment."
         )
         response = await chat.send_message(UserMessage(text=prompt))

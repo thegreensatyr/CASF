@@ -1,0 +1,40 @@
+{
+  "summary": "Iteration 9 — full validation of trust-score calibration + community Scam Wall signal integration. Backend: 9/9 new calibration tests PASS in 100s (real Claude Sonnet 4.5 calls) + 15/15 email-verification regression PASS. Frontend: /legitimacy page loads, form submits, report renders with the new `data-testid=score-methodology` <details> element, all 5 calibration bands (0–25, 25–45, 45–60, 60–75, 75–100) are visible when expanded, and the firsthand/Scam Wall note is present. Regression endpoints: /api/scams=24, /api/techniques=8, cache reuse hits <2s.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_legitimacy_calibration.py",
+    "/app/test_reports/pytest/iter9_calibration_results.xml",
+    "/app/test_reports/pytest/iter9_email_regression.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py lines 1918-1940 — the new 5-band SCORING CALIBRATION prompt with the explicit '55 not 42' default line is well-crafted and empirically produces the expected behavior: Chanced (unknown crypto sweepstakes) now scores in the 50-65 range with 'Insufficient Information'/'Caution Advised' verdict, and the fully-fabricated ZZZ9999FakeCasino also lands >=40. Verified in live Claude calls.",
+    "server.py lines 1905-1916 — the wall_count query uses `{'$regex': f'^{re.escape(req.casino_name)}$', '$options': 'i'}` which is properly anchored + case-insensitive + escaped. Direct mongo probe confirms 'bovada', 'Bovada', 'BOVADA', 'BoVaDa' all return the same count (1 for the seeded Bovada post).",
+    "server.py line 1949-1954 — the Community Scam Wall signal is correctly injected into the Claude prompt as an explicit line, so the LLM can incorporate the community concern.",
+    "Frontend Legitimacy.jsx lines 122-141 — the score-methodology <details> element is well-scoped: initially closed (open=null), toggles on summary click (open=''), renders all 5 bands in a responsive grid, and the firsthand/Scam Wall calibration note is present. data-testid is properly set.",
+    "One thing worth noting for future scoring stability: Claude's Chanced score was 60 in this run — but it may return 50-65 across calls due to stochasticity. Our assertion floor is 50 which matches the specified >=50 threshold, but any future band tightening should include a wider test tolerance.",
+    "Note (carryover from iter 8): server.py is still ~2885 lines — splitting into routers still overdue but not blocking.",
+    "Bovada test observation: only 1 seeded scam_post for Bovada (not 3+ as review_request implies). The wall_signal for 1 post evaluates to 'worth reviewing' (mild concern), not 'ELEVATED CONCERN'. The elevated-concern branch (>=3) is code-covered by inspection but not by data. If the intent was to prove the elevated-concern message flows through, main agent may want to seed 2 more Bovada posts. Signal composition itself is correct per unit test."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_legitimacy_calibration.py (new — 9 dynamic tests hitting real Claude Sonnet 4.5)"
+  ],
+  "success_rate": {
+    "backend": "24/24 = 100% (9 new calibration + 15 email-verification regression)",
+    "frontend": "1/1 = 100% (Legitimacy flow: login → verify → report → score-methodology expand)"
+  },
+  "test_credentials": "Admin: casforensics@gmail.com / CasForensics2026! (used for both backend LLM tests and frontend Playwright login).",
+  "seed_data_creation": "Pre-test: wiped db.legitimacy_reports where casino_name_lower in ['chanced','betway','pokerstars','zzz9999fakecasino…','bovada'] to guarantee fresh Claude calls (no cache pollution). Each calibration test writes 1 new legitimacy_reports document. The bovada scam_posts seed was NOT touched.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "For a full regression run: (1) pytest /app/backend/tests/test_legitimacy_calibration.py (~100s, 9 tests, hits Claude Sonnet 4.5 5× so occasionally 1 test may go slower — retry once); (2) pytest /app/backend/tests/test_email_verification.py (~6s, 15 tests); (3) pytest /app/backend/tests/test_legitimacy_pydantic_fix.py (from iter 8 — still valid, ~50s, 6 tests). Frontend regression: login as admin → /legitimacy → submit any casino name → wait for [data-testid=legit-report] → verify [data-testid=score-methodology] exists → click its <summary> → assert bands '0–25','25–45','45–60','60–75','75–100' all in inner_text. Trust score is stochastic — Chanced scored 60 in this run, but any value >=50 is acceptable per the recalibration spec. If a test claims 'Chanced <50' on retry, that's still a valid signal that Claude occasionally under-scores; open a bug then.",
+  "rca of the issue": "N/A — this iteration validated the fix from iteration 8's prior calibration issue (Chanced at 42). Confirmed empirically: Chanced now scores >=50 (60 in this run), reputable brands (Betway=88, PokerStars=87 typical) unchanged, novel unknowns default to 45-60 (in-band), and the community wall signal is a case-insensitive regex query that correctly counts seeded posts. The end-to-end integration between backend prompt-composition and Claude is working as specified."
+}
