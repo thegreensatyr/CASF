@@ -266,7 +266,6 @@ class AnalysisOut(BaseModel):
 
 class LegitimacyOut(BaseModel):
     id: str
-    user_id: str
     casino_name: str
     casino_url: Optional[str]
     trust_score: int
