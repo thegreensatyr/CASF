@@ -2191,6 +2191,87 @@ async def admin_reject_disagreement(disagreement_id: str, user=Depends(require_a
     return DisagreementActionResp(ok=True, status="rejected")
 
 
+# ============= Bulk rescan of all cached legitimacy reports =============
+class BulkRescanResp(BaseModel):
+    ok: bool
+    queued: int
+    task_id: str
+
+
+_RESCAN_STATUS: dict = {}  # in-memory task registry: task_id -> {total, done, current, results, started_at, finished_at}
+
+
+async def _run_bulk_rescan(task_id: str, targets: List[dict], admin_user_id: str):
+    """Sequentially rescan each casino. Logs progress in _RESCAN_STATUS."""
+    started = datetime.now(timezone.utc).isoformat()
+    _RESCAN_STATUS[task_id] = {
+        "total": len(targets),
+        "done": 0,
+        "current": None,
+        "results": [],
+        "started_at": started,
+        "finished_at": None,
+    }
+    for t in targets:
+        name = t["casino_name"]
+        url = t.get("casino_url")
+        _RESCAN_STATUS[task_id]["current"] = name
+        try:
+            # Clear any existing cache for this casino
+            name_lower = name.strip().lower()
+            await db.legitimacy_reports.delete_many({"casino_name_lower": name_lower})
+            # Fresh scan (includes approved disagreements + community signals in the prompt)
+            fresh = await _generate_legitimacy_doc(name, url, admin_user_id)
+            _RESCAN_STATUS[task_id]["results"].append({
+                "casino_name": name,
+                "trust_score": fresh.get("trust_score"),
+                "verdict": fresh.get("verdict"),
+                "ok": True,
+            })
+            logger.info(f"[bulk-rescan {task_id}] {name} → {fresh.get('trust_score')}")
+        except Exception as e:
+            logger.exception(f"[bulk-rescan {task_id}] FAILED for {name}: {e}")
+            _RESCAN_STATUS[task_id]["results"].append({
+                "casino_name": name,
+                "ok": False,
+                "error": str(e)[:200],
+            })
+        _RESCAN_STATUS[task_id]["done"] += 1
+    _RESCAN_STATUS[task_id]["finished_at"] = datetime.now(timezone.utc).isoformat()
+    _RESCAN_STATUS[task_id]["current"] = None
+
+
+@api_router.post("/admin/legitimacy/rescan-all", response_model=BulkRescanResp)
+async def admin_bulk_rescan(user=Depends(require_admin)):
+    """Rescan every distinct cached casino with the current calibration + approved feedback."""
+    # Get one canonical (name, url) per casino_name_lower — most recent record wins
+    pipeline = [
+        {"$match": {"is_cache_seed": True}},
+        {"$sort": {"created_at": -1}},
+        {"$group": {
+            "_id": "$casino_name_lower",
+            "casino_name": {"$first": "$casino_name"},
+            "casino_url": {"$first": "$casino_url"},
+        }},
+        {"$sort": {"casino_name": 1}},
+    ]
+    targets = [
+        {"casino_name": r["casino_name"], "casino_url": r.get("casino_url")}
+        async for r in db.legitimacy_reports.aggregate(pipeline)
+    ]
+    task_id = str(uuid.uuid4())
+    asyncio.create_task(_run_bulk_rescan(task_id, targets, user["id"]))
+    return BulkRescanResp(ok=True, queued=len(targets), task_id=task_id)
+
+
+@api_router.get("/admin/legitimacy/rescan-status/{task_id}")
+async def admin_bulk_rescan_status(task_id: str, user=Depends(require_admin)):
+    status = _RESCAN_STATUS.get(task_id)
+    if not status:
+        raise HTTPException(404, "Task not found or already expired.")
+    return status
+
+
 @api_router.get("/legitimacy/history", response_model=List[LegitimacyOut])
 async def legit_history(user=Depends(get_current_user)):
     docs = await db.legitimacy_reports.find(
