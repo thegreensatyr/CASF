@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="40 50 560 290" role="img" aria-label="CasinoForensicsUnit logo mark, copper wire">
+  <title>Casino Forensics Unit</title>
+  <defs>
+    <linearGradient id="copper" gradientUnits="userSpaceOnUse" x1="50" y1="60" x2="590" y2="330">
+      <stop offset="0" stop-color="#f7b98a"/><stop offset=".35" stop-color="#d98a47"/><stop offset=".7" stop-color="#b8692c"/><stop offset="1" stop-color="#e9a56c"/>
+    </linearGradient>
+    <radialGradient id="solder" cx=".35" cy=".3" r=".9">
+      <stop offset="0" stop-color="#ffe9d1"/><stop offset=".5" stop-color="#e29a5a"/><stop offset="1" stop-color="#a55a24"/>
+    </radialGradient>
+    <linearGradient id="lettering" gradientUnits="userSpaceOnUse" x1="0" y1="335" x2="0" y2="375">
+      <stop offset="0" stop-color="#ffd2a3"/><stop offset=".5" stop-color="#e0904a"/><stop offset="1" stop-color="#b8692c"/>
+    </linearGradient>
+    <g id="traces">
+      <g fill="none" stroke-linecap="round" stroke-linejoin="round" >
+    <path d="M108 190 H186 L204 172 H236" stroke="#2a1206" stroke-width="10"/>
+    <path d="M108 190 H186 L204 172 H236" stroke="url(#copper)" stroke-width="5"/>
+    <path d="M108 190 H186 L204 172 H236" stroke="#ffe0bd" stroke-width="1.4" opacity=".85" transform="translate(-0.8 -0.8)"/>
+  </g>
+      <g fill="none" stroke-linecap="round" stroke-linejoin="round" >
+    <path d="M186 190 L204 208 H236" stroke="#2a1206" stroke-width="10"/>
+    <path d="M186 190 L204 208 H236" stroke="url(#copper)" stroke-width="5"/>
+    <path d="M186 190 L204 208 H236" stroke="#ffe0bd" stroke-width="1.4" opacity=".85" transform="translate(-0.8 -0.8)"/>
+  </g>
+      <g fill="none" stroke-linecap="round" stroke-linejoin="round" >
+    <path d="M116 156 H150 L168 138 H222" stroke="#2a1206" stroke-width="10"/>
+    <path d="M116 156 H150 L168 138 H222" stroke="url(#copper)" stroke-width="5"/>
+    <path d="M116 156 H150 L168 138 H222" stroke="#ffe0bd" stroke-width="1.4" opacity=".85" transform="translate(-0.8 -0.8)"/>
+  </g>
+      <g fill="none" stroke-linecap="round" stroke-linejoin="round" >
+    <path d="M116 224 H150 L168 242 H222" stroke="#2a1206" stroke-width="10"/>
+    <path d="M116 224 H150 L168 242 H222" stroke="url(#copper)" stroke-width="5"/>
+    <path d="M116 224 H150 L168 242 H222" stroke="#ffe0bd" stroke-width="1.4" opacity=".85" transform="translate(-0.8 -0.8)"/>
+  </g>
+      <g><circle cx="108" cy="190" r="8.5" fill="#2a1206"/><circle cx="108" cy="190" r="6" fill="url(#copper)"/><circle cx="108" cy="190" r="2.52" fill="#2a1206"/></g><g><circle cx="116" cy="156" r="8.5" fill="#2a1206"/><circle cx="116" cy="156" r="6" fill="url(#copper)"/><circle cx="116" cy="156" r="2.52" fill="#2a1206"/></g><g><circle cx="116" cy="224" r="8.5" fill="#2a1206"/><circle cx="116" cy="224" r="6" fill="url(#copper)"/><circle cx="116" cy="224" r="2.52" fill="#2a1206"/></g>
+      <g><circle cx="238" cy="172" r="9.5" fill="#2a1206"/><circle cx="238" cy="172" r="7" fill="url(#solder)"/><circle cx="235.9" cy="169.55" r="2.1" fill="#fff" opacity=".85"/></g><g><circle cx="238" cy="208" r="9.5" fill="#2a1206"/><circle cx="238" cy="208" r="7" fill="url(#solder)"/><circle cx="235.9" cy="205.55" r="2.1" fill="#fff" opacity=".85"/></g><g><circle cx="224" cy="138" r="9.5" fill="#2a1206"/><circle cx="224" cy="138" r="7" fill="url(#solder)"/><circle cx="221.9" cy="135.55" r="2.1" fill="#fff" opacity=".85"/></g><g><circle cx="224" cy="242" r="9.5" fill="#2a1206"/><circle cx="224" cy="242" r="7" fill="url(#solder)"/><circle cx="221.9" cy="239.55" r="2.1" fill="#fff" opacity=".85"/></g>
+    </g>
+  </defs>
+  <!-- poker table: outer rail + inner rail (two wire loops), dotted "bead" betting line -->
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round" >
+    <rect x="60" y="70" width="520" height="240" rx="120" stroke="#2a1206" stroke-width="17"/>
+    <rect x="60" y="70" width="520" height="240" rx="120" stroke="url(#copper)" stroke-width="12"/>
+    <rect x="60" y="70" width="520" height="240" rx="120" stroke="#ffe0bd" stroke-width="2.64" opacity=".85" transform="translate(-1.92 -1.92)"/>
+  </g>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round" >
+    <rect x="88" y="98" width="464" height="184" rx="92" stroke="#2a1206" stroke-width="11"/>
+    <rect x="88" y="98" width="464" height="184" rx="92" stroke="url(#copper)" stroke-width="6"/>
+    <rect x="88" y="98" width="464" height="184" rx="92" stroke="#ffe0bd" stroke-width="1.4" opacity=".85" transform="translate(-0.96 -0.96)"/>
+  </g>
+  <rect x="106" y="116" width="428" height="148" rx="74" fill="none" stroke="#2a1206" stroke-width="7" stroke-dasharray="0 13" stroke-linecap="round"/>
+  <rect x="106" y="116" width="428" height="148" rx="74" fill="none" stroke="url(#copper)" stroke-width="4.5" stroke-dasharray="0 13" stroke-linecap="round"/>
+  <!-- little tie-points where the rails are joined -->
+  <g><circle cx="320" cy="70" r="8.5" fill="#2a1206"/><circle cx="320" cy="70" r="6" fill="url(#solder)"/><circle cx="318.2" cy="67.9" r="1.7999999999999998" fill="#fff" opacity=".85"/></g><g><circle cx="320" cy="310" r="8.5" fill="#2a1206"/><circle cx="320" cy="310" r="6" fill="url(#solder)"/><circle cx="318.2" cy="307.9" r="1.7999999999999998" fill="#fff" opacity=".85"/></g><g><circle cx="60" cy="190" r="8.5" fill="#2a1206"/><circle cx="60" cy="190" r="6" fill="url(#solder)"/><circle cx="58.2" cy="187.9" r="1.7999999999999998" fill="#fff" opacity=".85"/></g><g><circle cx="580" cy="190" r="8.5" fill="#2a1206"/><circle cx="580" cy="190" r="6" fill="url(#solder)"/><circle cx="578.2" cy="187.9" r="1.7999999999999998" fill="#fff" opacity=".85"/></g>
+  <!-- circuitry, mirrored left/right -->
+  <use href="#traces"/>
+  <use href="#traces" transform="translate(640 0) scale(-1 1)"/>
+  <!-- magnifying glass: long wire handle with coiled grip, ferrule collar, clean wire ring -->
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round" >
+    <path d="M366 236 L440 310" stroke="#2a1206" stroke-width="18"/>
+    <path d="M366 236 L440 310" stroke="url(#copper)" stroke-width="13"/>
+    <path d="M366 236 L440 310" stroke="#ffe0bd" stroke-width="2.86" opacity=".85" transform="translate(-2.08 -2.08)"/>
+  </g>
+  <g fill="none" stroke-linecap="round">
+    <line x1="398" y1="268" x2="438" y2="308" stroke="#2a1206" stroke-width="27"/>
+    <line x1="398" y1="268" x2="438" y2="308" stroke="url(#copper)" stroke-width="21"/>
+    <line x1="398" y1="268" x2="438" y2="308" stroke="#2a1206" stroke-width="21" stroke-dasharray="3 6" stroke-linecap="butt" opacity=".55"/>
+    <line x1="399" y1="266" x2="436" y2="303" stroke="#ffe0bd" stroke-width="3" opacity=".7"/>
+  </g>
+  <g><circle cx="441" cy="311" r="11.5" fill="#2a1206"/><circle cx="441" cy="311" r="9" fill="url(#solder)"/><circle cx="438.3" cy="307.85" r="2.6999999999999997" fill="#fff" opacity=".85"/></g>
+  <g fill="none" stroke-linecap="round">
+    <line x1="360" y1="230" x2="378" y2="248" stroke="#2a1206" stroke-width="26"/>
+    <line x1="360" y1="230" x2="378" y2="248" stroke="url(#copper)" stroke-width="20"/>
+    <line x1="358" y1="234" x2="374" y2="250" stroke="#ffe0bd" stroke-width="3" opacity=".6"/>
+  </g>
+  <circle cx="320" cy="190" r="62" fill="#ffffff" fill-opacity=".16"/>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round" >
+    <circle cx="320" cy="190" r="62" stroke="#2a1206" stroke-width="17"/>
+    <circle cx="320" cy="190" r="62" stroke="url(#copper)" stroke-width="12"/>
+    <circle cx="320" cy="190" r="62" stroke="#ffe0bd" stroke-width="2.64" opacity=".85" transform="translate(-1.92 -1.92)"/>
+  </g>
+  <!-- poker chip made of wire, seen through the lens -->
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round" >
+    <circle cx="320" cy="190" r="36" stroke="#2a1206" stroke-width="10"/>
+    <circle cx="320" cy="190" r="36" stroke="url(#copper)" stroke-width="5"/>
+    <circle cx="320" cy="190" r="36" stroke="#ffe0bd" stroke-width="1.4" opacity=".85" transform="translate(-0.8 -0.8)"/>
+  </g>
+  <circle cx="320" cy="190" r="26" fill="none" stroke="#2a1206" stroke-width="7" stroke-dasharray="0 11.4" stroke-linecap="round"/>
+  <circle cx="320" cy="190" r="26" fill="none" stroke="url(#copper)" stroke-width="4.5" stroke-dasharray="0 11.4" stroke-linecap="round"/>
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round" >
+    <path d="M320 176 L331 190 L320 204 L309 190 Z" stroke="#2a1206" stroke-width="9"/>
+    <path d="M320 176 L331 190 L320 204 L309 190 Z" stroke="url(#copper)" stroke-width="4"/>
+    <path d="M320 176 L331 190 L320 204 L309 190 Z" stroke="#ffe0bd" stroke-width="1.4" opacity=".85" transform="translate(-0.64 -0.64)"/>
+  </g>
+  <!-- glare on the glass -->
+  <path d="M272 176 A52 52 0 0 1 300 142" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" opacity=".9"/><circle cx="312" cy="136" r="3.2" fill="#fff" opacity=".9"/>
+
+</svg>

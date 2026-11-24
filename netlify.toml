@@ -1,9 +1,5 @@
+# CasinoForensicsUnit — plain static site, no build step.
+# The launch gate runs first: if any page is still DRAFT or a casino record is unsourced, the deploy stops.
 [build]
-base = "frontend"
-command = "yarn build"
-publish = "frontend/build"
-
-[[redirects]]
-from = "/*"
-to = "/index.html"
-status = 200
+  publish = "."
+  command = "node scripts/deploy-check.js"

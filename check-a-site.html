@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Check a Casino Site — CasinoForensicsUnit</title>
+  <meta name="description" content="Enter a casino website address and CasinoForensicsUnit will report what it can verify, with sources.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700;900&family=Cinzel:wght@500;600;700&family=Crimson+Pro:ital,wght@0,400;0,600;1,400&family=Special+Elite&display=swap" rel="stylesheet">
+  <link rel="icon" type="image/svg+xml" href="assets/logo-mark.svg">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="marquee" aria-hidden="true"></div>
+<header class="site-header">
+  <div class="wrap">
+    <a class="brand" href="index.html" aria-label="CasinoForensicsUnit home">
+      <img src="assets/logo-mark.svg" width="124" height="64" alt="CasinoForensicsUnit logo: a poker table with circuitry and a magnifying glass, in copper wire">
+      <span class="brand-name">CasinoForensicsUnit<small>Independent investigations</small></span>
+    </a>
+    <button class="nav-toggle" aria-expanded="false" aria-controls="nav-list">Menu</button>
+    <nav class="nav" aria-label="Main">
+      <ul class="nav-list" id="nav-list">
+        <li><a href="index.html">Home</a></li>
+        <li><a href="check-a-site.html" aria-current="page">Check a Site</a></li>
+        <li><a href="casinos.html">Casinos</a></li>
+        <li><a href="scam-wall.html">Scam Wall</a></li>
+        <li><a href="psychology.html">Psychology</a></li>
+        <li><a href="how-we-rate.html">How We Rate</a></li>
+      </ul>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <section class="hero">
+    <div class="wrap">
+      <p class="eyebrow">Site checker · coming soon</p>
+      <h1>Check a Casino Site</h1>
+      <p class="lede">Paste a web address. We report what we can verify and say plainly what we can't.</p>
+    </div>
+  </section>
+  <section class="block">
+    <div class="wrap">
+      <div class="frame c-teal">
+        <span class="stamp pending">Coming soon</span>
+        <h2>Enter a casino's web address</h2>
+        <form onsubmit="return false" aria-describedby="checker-note">
+          <label for="site-url">Website address</label>
+          <input id="site-url" type="url" placeholder="https://example-casino.com" disabled>
+          <p id="checker-note" class="source">This tool is not switched on yet. It is being built so that it only reports findings it can source. It will never guess.</p>
+          <button class="btn" type="submit" disabled aria-disabled="true">Check this site</button>
+        </form>
+      </div>
+
+      <h2 class="section-title" style="margin-top:3rem">What it will look at</h2>
+      <p class="flourish" aria-hidden="true">✦ ✦ ✦</p>
+      <div class="grid">
+        <div class="frame c-sapphire"><h3>Domain history</h3><p>Who registered the domain and when, using public registration records.</p></div>
+        <div class="frame c-teal"><h3>License claims</h3><p>If the site says it is licensed, we compare that claim to the regulator's public registry.</p></div>
+        <div class="frame c-topaz"><h3>Terms and rules</h3><p>Withdrawal, wagering and redemption rules pulled from the site's own terms, quoted word for word.</p></div>
+        <div class="frame c-ruby"><h3>Safety basics</h3><p>Secure connection, age notices and responsible-gambling tools: present or missing.</p></div>
+        <div class="frame c-amethyst"><h3>Known reports</h3><p>Matches against our own Scam Wall and other public reports, each with its source.</p></div>
+        <div class="frame c-coral"><h3>Pressure tactics</h3><p>Design tricks that push people to keep playing, quoted from the page. See the <a href="psychology.html">Psychology Library</a>.</p></div>
+      </div>
+
+      <div class="callout">
+        <strong>What a result is, and isn't.</strong> A result is a list of findings with sources and the date we checked. It is not a legal finding and it is not a verdict that a casino is "a scam." Anything we cannot check will read <em>"Couldn't verify"</em>, never a made-up score.
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <div class="footer-grid">
+      <div>
+        <h2>CasinoForensicsUnit</h2>
+        <p>Independent reviews and investigations of online casinos. We are not a casino and we do not take deposits or bets.</p>
+      </div>
+      <div>
+        <h2>Explore</h2>
+        <ul>
+          <li><a href="check-a-site.html">Check a Site</a></li>
+          <li><a href="casinos.html">Casinos</a></li>
+          <li><a href="scam-wall.html">Scam Wall</a></li>
+          <li><a href="psychology.html">Psychology Library</a></li>
+          <li><a href="how-we-rate.html">How We Rate</a></li>
+          <li><a href="disclosure.html">Affiliate Disclosure</a></li>
+        </ul>
+      </div>
+      <div class="helpline">
+        <h2>Need help?</h2>
+        <p>Gambling should never feel out of control. The National Problem Gambling Helpline is free, confidential and open 24/7: call <a href="tel:18005224700">1-800-522-4700</a>, text <strong>800GAM</strong>, or <a href="https://www.ncpgambling.org/chat">chat online</a>. <a href="responsible-gambling.html">More support, including Canada</a>.</p>
+      </div>
+    </div>
+    <p class="fineprint">You must be of legal age where you live to gamble. Online casino and sweepstakes rules vary by state and country, so check your local laws before you play. Some links on this site may be affiliate links; see our <a href="disclosure.html">Affiliate Disclosure</a>. Nothing here is legal or financial advice.</p>
+  </div>
+</footer>
+<script src="js/main.js"></script>
+</body>
+</html>
